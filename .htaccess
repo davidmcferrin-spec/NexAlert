@@ -18,6 +18,9 @@ RewriteRule ^\.(?!well-known) - [F,L]
 # Block direct access to source directories
 RewriteRule ^(workers/|config/|db/|tests/|docs/|web/) - [F,L]
 
+# Root URL → admin console (DirectoryIndex would otherwise serve index.php / API)
+RewriteRule ^$ /admin [R=302,L]
+
 # Route /api/* to index.php (REST API)
 RewriteCond %{REQUEST_URI} ^/api
 RewriteRule .* index.php [L,QSA]
