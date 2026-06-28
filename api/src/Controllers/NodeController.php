@@ -20,6 +20,7 @@ use NexAlert\Api\Response;
 use NexAlert\Config\Database;
 use NexAlert\Services\AuditService;
 use NexAlert\Services\TagService;
+use PDOException;
 
 class NodeController
 {
@@ -57,14 +58,14 @@ class NodeController
         $activeOnly = $request->query('active', '1') !== '0';
         $type       = $request->query('type');
 
-        $where  = ['org_id = ?'];
+        $where  = ['n.org_id = ?'];
         $params = [$orgId];
 
         if ($activeOnly) {
-            $where[]  = 'is_active = 1';
+            $where[]  = 'n.is_active = 1';
         }
         if ($type && in_array($type, self::VALID_TYPES, true)) {
-            $where[]  = 'node_type = ?';
+            $where[]  = 'n.node_type = ?';
             $params[] = $type;
         }
 
@@ -436,6 +437,7 @@ class NodeController
 
     /**
      * Ensure every org has a root org_node (repairs legacy orgs created without one).
+     * Safe under concurrent requests: INSERT IGNORE + duplicate-key catch.
      */
     private static function ensureOrgRootNode(Database $db, int $orgId): void
     {
@@ -451,16 +453,38 @@ class NodeController
             return;
         }
 
-        $db->execute(
-            "INSERT INTO org_nodes (org_id, parent_id, node_type, name, slug, path, depth, is_active)
-             VALUES (?, NULL, 'org', ?, ?, ?, 0, 1)",
-            [$orgId, $org['name'], $org['slug'], "/{$orgId}/"]
-        );
-        $nodeId = $db->lastInsertId();
-        $db->execute(
-            'UPDATE org_nodes SET path = ? WHERE id = ?',
-            ["/{$orgId}/{$nodeId}/", $nodeId]
-        );
+        try {
+            $db->transaction(function (Database $db) use ($orgId, $org): void {
+                if ($db->fetchValue(
+                    "SELECT id FROM org_nodes WHERE org_id = ? AND node_type = 'org' AND is_active = 1",
+                    [$orgId]
+                )) {
+                    return;
+                }
+
+                $db->execute(
+                    "INSERT IGNORE INTO org_nodes (org_id, parent_id, node_type, name, slug, path, depth, is_active)
+                     VALUES (?, NULL, 'org', ?, ?, ?, 0, 1)",
+                    [$orgId, $org['name'], $org['slug'], "/{$orgId}/"]
+                );
+
+                $nodeId = $db->lastInsertId();
+                if ($nodeId === 0) {
+                    return;
+                }
+
+                $db->execute(
+                    'UPDATE org_nodes SET path = ? WHERE id = ?',
+                    ["/{$orgId}/{$nodeId}/", $nodeId]
+                );
+            });
+        } catch (PDOException $e) {
+            // Another request won the race on (org_id, slug); list can proceed.
+            if ((int) ($e->errorInfo[1] ?? 0) === 1062) {
+                return;
+            }
+            throw $e;
+        }
     }
 
     /**
