@@ -1,0 +1,32 @@
+<?php
+// web/templates/pages/orgs/node_delete.php
+// POST /admin/orgs/node/delete
+$token   = $_SESSION['access_token'];
+$apiBase = Env::get('APP_URL');
+$orgId   = (int) ($_POST['org_id'] ?? 0);
+$id      = (int) ($_POST['id'] ?? 0);
+
+if (!$orgId || !$id) {
+    flash('Organization and node are required.', 'error');
+    header('Location: /admin/orgs');
+    exit;
+}
+
+$ctx = stream_context_create(['http' => [
+    'method'        => 'DELETE',
+    'header'        => "Authorization: Bearer {$token}",
+    'timeout'       => 10,
+    'ignore_errors' => true,
+]]);
+
+$raw = @file_get_contents("{$apiBase}/api/v1/orgs/{$orgId}/nodes/{$id}", false, $ctx);
+$res = $raw ? json_decode($raw, true) : null;
+
+if ($res && $res['success']) {
+    flash('Node deactivated.');
+} else {
+    flash($res['error'] ?? 'Failed to deactivate node.', 'error');
+}
+
+header('Location: /admin/orgs');
+exit;
