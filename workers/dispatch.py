@@ -283,6 +283,191 @@ def process_dispatch_alert(conn, alert_id: int):
                 "UPDATE alerts SET status = 'sent', sent_at = COALESCE(sent_at, NOW()) WHERE id = %s",
                 (alert_id,),
             )
+            # Set ack deadline and schedule escalation when alert fully sent
+            cur.execute(
+                """
+                SELECT ack_required, ack_deadline_minutes, escalation_user_id, escalated_at, status
+                FROM alerts WHERE id = %s
+                """,
+                (alert_id,),
+            )
+            alert_meta = cur.fetchone()
+            if alert_meta and int(alert_meta.get("ack_required") or 0) == 1:
+                deadline_mins = alert_meta.get("ack_deadline_minutes")
+                esc_user = alert_meta.get("escalation_user_id")
+                if deadline_mins and int(deadline_mins) > 0:
+                    cur.execute(
+                        """
+                        UPDATE alerts
+                        SET ack_deadline_at = DATE_ADD(COALESCE(sent_at, NOW()), INTERVAL %s MINUTE)
+                        WHERE id = %s AND ack_deadline_at IS NULL
+                        """,
+                        (int(deadline_mins), alert_id),
+                    )
+                    if esc_user and not alert_meta.get("escalated_at"):
+                        delay_secs = int(deadline_mins) * 60
+                        cur.execute(
+                            """
+                            INSERT INTO jobs (queue, payload, status, available_at)
+                            VALUES ('dispatch', %s, 'pending',
+                                    DATE_ADD(UTC_TIMESTAMP(), INTERVAL %s SECOND))
+                            """,
+                            (
+                                json.dumps({"type": "ack_escalate", "data": {"alert_id": alert_id}}),
+                                delay_secs,
+                            ),
+                        )
+                        log.info(
+                            "Scheduled ack escalation for alert %s in %s minutes (user %s)",
+                            alert_id,
+                            deadline_mins,
+                            esc_user,
+                        )
+        conn.commit()
+
+
+def process_ack_escalate(conn, alert_id: int):
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT id, subject, body, severity, status, ack_required, ack_deadline_at,
+                   escalation_user_id, escalated_at, sent_at
+            FROM alerts WHERE id = %s
+            """,
+            (alert_id,),
+        )
+        alert = cur.fetchone()
+        if not alert:
+            raise RuntimeError(f"Alert {alert_id} not found")
+
+        if alert.get("escalated_at"):
+            log.info("Alert %s already escalated — skipping", alert_id)
+            return
+
+        if alert.get("status") in ("cancelled", "expired", "draft"):
+            log.info("Alert %s status %s — skipping escalation", alert_id, alert.get("status"))
+            return
+
+        if int(alert.get("ack_required") or 0) != 1:
+            log.info("Alert %s does not require ack — skipping escalation", alert_id)
+            return
+
+        esc_user_id = alert.get("escalation_user_id")
+        if not esc_user_id:
+            log.info("Alert %s has no escalation user — skipping", alert_id)
+            return
+
+        cur.execute(
+            """
+            SELECT COUNT(DISTINCT user_id) AS c
+            FROM alert_deliveries
+            WHERE alert_id = %s AND status IN ('sent', 'delivered')
+            """,
+            (alert_id,),
+        )
+        recipient_row = cur.fetchone()
+        total_recipients = int(recipient_row["c"] or 0) if recipient_row else 0
+
+        cur.execute(
+            "SELECT COUNT(DISTINCT user_id) AS c FROM alert_acks WHERE alert_id = %s",
+            (alert_id,),
+        )
+        ack_row = cur.fetchone()
+        acked = int(ack_row["c"] or 0) if ack_row else 0
+        unacked = max(0, total_recipients - acked)
+
+        if unacked == 0:
+            log.info("Alert %s fully acknowledged — no escalation needed", alert_id)
+            cur.execute(
+                "UPDATE alerts SET escalated_at = NOW() WHERE id = %s AND escalated_at IS NULL",
+                (alert_id,),
+            )
+            conn.commit()
+            return
+
+        cur.execute(
+            """
+            SELECT u.id, u.display_name,
+                   (SELECT uc.contact_value FROM user_contacts uc
+                    WHERE uc.user_id = u.id AND uc.channel = 'email' AND uc.is_primary = 1
+                    LIMIT 1) AS email
+            FROM users u
+            WHERE u.id = %s AND u.is_active = 1
+            """,
+            (esc_user_id,),
+        )
+        esc_user = cur.fetchone()
+        if not esc_user or not esc_user.get("email"):
+            raise RuntimeError(f"Escalation user {esc_user_id} not found or has no email")
+
+        cur.execute(
+            """
+            SELECT DISTINCT u.display_name,
+                   (SELECT uc.contact_value FROM user_contacts uc
+                    WHERE uc.user_id = u.id AND uc.channel = 'email' AND uc.is_primary = 1
+                    LIMIT 1) AS email
+            FROM alert_deliveries ad
+            JOIN users u ON u.id = ad.user_id
+            LEFT JOIN alert_acks aa ON aa.alert_id = ad.alert_id AND aa.user_id = ad.user_id
+            WHERE ad.alert_id = %s
+              AND ad.status IN ('sent', 'delivered')
+              AND aa.id IS NULL
+            ORDER BY u.display_name
+            LIMIT 50
+            """,
+            (alert_id,),
+        )
+        unacked_users = cur.fetchall()
+
+    severity = (alert.get("severity") or "info").upper()
+    subject = alert.get("subject") or "Alert"
+    deadline = alert.get("ack_deadline_at")
+    deadline_str = deadline.strftime("%Y-%m-%d %H:%M UTC") if hasattr(deadline, "strftime") else str(deadline or "")
+
+    names_html = "".join(
+        f"<li>{escape(u.get('display_name') or u.get('email') or '?')}</li>"
+        for u in unacked_users
+    )
+    if unacked > len(unacked_users):
+        names_html += f"<li>…and {unacked - len(unacked_users)} more</li>"
+
+    app_url = env("APP_URL", "").rstrip("/")
+    history_url = f"{app_url}/admin/alerts/history"
+
+    email_subject = f"[NexAlert ESCALATION] {unacked} unacked — {subject}"
+    html = f"""<!DOCTYPE html><html><body style="font-family:sans-serif;color:#374151;max-width:600px;">
+    <h1 style="font-size:18px;color:#c11414;">Acknowledgement deadline missed</h1>
+    <p><strong>{escape(subject)}</strong> ({escape(severity)}) still has
+       <strong>{unacked}</strong> of {total_recipients} recipients who have not acknowledged.</p>
+    <p style="font-size:13px;color:#6b7280;">Ack deadline: {escape(deadline_str)}</p>
+    <div style="font-size:14px;line-height:1.5;">{escape(alert.get('body') or '')[:500]}</div>
+    <p style="margin-top:16px;font-size:13px;">Unacknowledged recipients:</p>
+    <ul style="font-size:13px;">{names_html}</ul>
+    <p style="margin-top:24px;">
+      <a href="{escape(history_url)}" style="background:#e51c1c;color:#fff;padding:10px 20px;text-decoration:none;border-radius:8px;">
+        View alert history
+      </a>
+    </p></body></html>"""
+
+    text = (
+        f"NexAlert escalation: {unacked} of {total_recipients} have not acked alert #{alert_id}\n"
+        f"Subject: {subject}\nDeadline: {deadline_str}\n\n"
+        f"View: {history_url}\n"
+    )
+
+    send_email(esc_user["email"], email_subject, html, text)
+    log.info(
+        "Escalation sent for alert %s to user %s (%s unacked)",
+        alert_id,
+        esc_user_id,
+        unacked,
+    )
+
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE alerts SET escalated_at = NOW() WHERE id = %s",
+            (alert_id,),
+        )
         conn.commit()
 
 
@@ -329,6 +514,8 @@ def process_job(conn, job: dict):
 
     if job_type == "dispatch_alert":
         process_dispatch_alert(conn, int(data["alert_id"]))
+    elif job_type == "ack_escalate":
+        process_ack_escalate(conn, int(data["alert_id"]))
     elif job_type == "sms_optin":
         process_sms_optin(conn, int(data["contact_id"]), int(data["user_id"]))
     else:

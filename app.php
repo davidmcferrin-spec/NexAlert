@@ -21,6 +21,8 @@ Logger::init();
 
 session_start();
 
+require_once NEXALERT_ROOT . '/web/helpers/ui.php';
+
 $uri    = strtok($_SERVER['REQUEST_URI'] ?? '/', '?');
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 

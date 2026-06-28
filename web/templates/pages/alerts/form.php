@@ -10,7 +10,9 @@ $pageSubtitle = 'Compose and dispatch a multi-channel alert';
 
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Severity</label>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    <?= tip_label('Severity', 'How urgent the alert is. Critical and evacuation override user channel preferences.') ?>
+                </label>
                 <select x-model="form.severity"
                         class="w-full px-3 py-2 text-sm rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800">
                     <option value="test">Test</option>
@@ -22,7 +24,9 @@ $pageSubtitle = 'Compose and dispatch a multi-channel alert';
                 </select>
             </div>
             <div>
-                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Alert type</label>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    <?= tip_label('Alert type', 'Simple = no reply. Ack = recipients must confirm. Poll = vote on options.') ?>
+                </label>
                 <select x-model="form.alert_type"
                         class="w-full px-3 py-2 text-sm rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800">
                     <option value="simple">Simple (no reply)</option>
@@ -33,58 +37,95 @@ $pageSubtitle = 'Compose and dispatch a multi-channel alert';
         </div>
 
         <div>
-            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Subject</label>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                <?= tip_label('Subject', 'Short headline shown in email subject and SMS prefix (max 255 chars).') ?>
+            </label>
             <input type="text" x-model="form.subject" required maxlength="255"
                    class="w-full px-3 py-2 text-sm rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800">
         </div>
 
         <div>
-            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Body</label>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                <?= tip_label('Body', 'Main message content. Plain text; line breaks preserved in email.') ?>
+            </label>
             <textarea x-model="form.body" rows="5" required
                       class="w-full px-3 py-2 text-sm rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800"></textarea>
         </div>
 
         <div x-show="form.alert_type === 'poll'" class="space-y-3">
             <div>
-                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Poll question</label>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    <?= tip_label('Poll question', 'Question recipients answer when they open the poll.') ?>
+                </label>
                 <input type="text" x-model="form.poll_question"
                        class="w-full px-3 py-2 text-sm rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800">
             </div>
             <div>
-                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Options (one per line)</label>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    <?= tip_label('Options (one per line)', 'Each line becomes a selectable poll answer.') ?>
+                </label>
                 <textarea x-model="pollOptionsText" rows="3" placeholder="Yes&#10;No&#10;Maybe"
                           class="w-full px-3 py-2 text-sm rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 font-mono"></textarea>
             </div>
         </div>
 
-        <div x-show="form.alert_type === 'ack_required'" class="grid grid-cols-2 gap-4">
+        <div x-show="form.alert_type === 'ack_required'" class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Ack deadline (minutes)</label>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    <?= tip_label('Ack deadline (minutes)', 'If not all recipients ack within this window, the escalation user is notified.') ?>
+                </label>
                 <input type="number" x-model.number="form.ack_deadline_minutes" min="1"
                        class="w-full px-3 py-2 text-sm rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800">
+            </div>
+            <div>
+                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    <?= tip_label('Escalation contact', 'User who receives an email listing unacknowledged recipients after the deadline.') ?>
+                </label>
+                <select x-model.number="form.escalation_user_id"
+                        class="w-full px-3 py-2 text-sm rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800">
+                    <option value="">— None —</option>
+                    <template x-for="u in escalationUsers" :key="u.id">
+                        <option :value="u.id" x-text="u.display_name + ' (' + u.username + ')'"></option>
+                    </template>
+                </select>
             </div>
         </div>
 
         <div>
-            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">Channels</label>
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                <?= tip_label('Channels', 'Delivery channels. SMS requires confirmed opt-in per recipient.') ?>
+            </label>
             <div class="flex flex-wrap gap-4">
-                <label class="flex items-center gap-2 text-sm"><input type="checkbox" value="email" x-model="form.channels"> Email</label>
-                <label class="flex items-center gap-2 text-sm"><input type="checkbox" value="sms" x-model="form.channels"> SMS</label>
+                <label class="flex items-center gap-2 text-sm" <?= tip_attr('Send via verified email contacts', 'bottom') ?>>
+                    <input type="checkbox" value="email" x-model="form.channels"> Email
+                </label>
+                <label class="flex items-center gap-2 text-sm" <?= tip_attr('Send via SMS to users with confirmed Twilio consent', 'bottom') ?>>
+                    <input type="checkbox" value="sms" x-model="form.channels"> SMS
+                </label>
             </div>
         </div>
     </div>
 
     <div class="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 p-6 space-y-4">
         <div class="flex items-center justify-between">
-            <h2 class="text-sm font-semibold text-gray-900 dark:text-white">Targets</h2>
-            <a href="/admin/test-send" class="text-xs text-red-600 hover:underline">Open target builder</a>
+            <h2 class="text-sm font-semibold text-gray-900 dark:text-white">
+                <?= tip_label('Targets', 'Who receives this alert. OR groups are unioned; AND terms within a group must all match.') ?>
+            </h2>
+            <a href="/admin/test-send" class="text-xs text-red-600 hover:underline"
+               <?= tip_attr('Open the visual target builder — expression and tree carry over here', 'left') ?>>
+                Open target builder
+            </a>
         </div>
+        <p x-show="hasTargetTree" class="text-xs text-green-600 dark:text-green-400">
+            ✓ Target tree loaded from Test Send — will be sent with the alert for exact AND/OR resolution.
+        </p>
         <textarea x-model="form.targets" rows="3"
                   placeholder="(org:nexstar AND tag:engineering) OR group:noc@nexstar"
                   class="w-full px-3 py-2 text-sm font-mono rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800"></textarea>
         <div class="flex items-center gap-3">
             <button type="button" @click="previewTargets()"
-                    class="px-4 py-2 text-xs font-semibold rounded-xl bg-gray-100 dark:bg-gray-800 hover:bg-gray-200">
+                    class="px-4 py-2 text-xs font-semibold rounded-xl bg-gray-100 dark:bg-gray-800 hover:bg-gray-200"
+                    <?= tip_attr('Resolve expression (and tree if loaded) to recipient counts without sending', 'top') ?>>
                 Preview recipients
             </button>
             <span x-show="preview.counts" class="text-sm text-gray-500">
@@ -99,7 +140,8 @@ $pageSubtitle = 'Compose and dispatch a multi-channel alert';
 
     <div class="flex items-center gap-3">
         <button @click="send()" :disabled="sending"
-                class="px-6 py-2.5 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-sm font-semibold rounded-xl">
+                class="px-6 py-2.5 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white text-sm font-semibold rounded-xl"
+                <?= tip_attr('Queue alert for dispatch worker — deliveries sent asynchronously', 'top') ?>>
             <span x-text="sending ? 'Sending…' : 'Send Alert'"></span>
         </button>
         <a href="/admin/alerts/history" class="text-sm text-gray-500 hover:text-gray-700">View history</a>
@@ -118,25 +160,47 @@ function alertComposer() {
             targets: '',
             poll_question: '',
             ack_deadline_minutes: 30,
+            escalation_user_id: '',
         },
+        targetTree: null,
+        hasTargetTree: false,
+        escalationUsers: [],
         pollOptionsText: 'Yes\nNo',
         preview: {},
         sending: false,
 
-        init() {
-            const saved = sessionStorage.getItem('nexalert_target_expression');
-            if (saved) {
-                this.form.targets = saved;
+        async init() {
+            const savedExpr = sessionStorage.getItem('nexalert_target_expression');
+            const savedTree = sessionStorage.getItem('nexalert_target_tree');
+            if (savedExpr) {
+                this.form.targets = savedExpr;
                 sessionStorage.removeItem('nexalert_target_expression');
+            }
+            if (savedTree) {
+                try {
+                    this.targetTree = JSON.parse(savedTree);
+                    this.hasTargetTree = this.targetTree && this.targetTree.type === 'group';
+                    sessionStorage.removeItem('nexalert_target_tree');
+                } catch (e) {
+                    this.targetTree = null;
+                    this.hasTargetTree = false;
+                }
+            }
+
+            const res = await api.get('/users?limit=200');
+            if (res.ok) {
+                this.escalationUsers = (res.data.data?.users || []);
             }
         },
 
         async previewTargets() {
-            if (!this.form.targets.trim()) {
-                toast('Enter a target expression', 'error');
+            if (!this.form.targets.trim() && !this.hasTargetTree) {
+                toast('Enter a target expression or load from Test Send', 'error');
                 return;
             }
-            const res = await api.post('/targets/preview', { expression: this.form.targets });
+            const payload = { expression: this.form.targets };
+            if (this.hasTargetTree) payload.target_tree = this.targetTree;
+            const res = await api.post('/targets/preview', payload);
             if (res.ok) this.preview = res.data.data;
             else toast(res.data?.error || 'Preview failed', 'error');
         },
@@ -146,7 +210,7 @@ function alertComposer() {
                 toast('Subject and body are required', 'error');
                 return;
             }
-            if (!this.form.targets.trim()) {
+            if (!this.form.targets.trim() && !this.hasTargetTree) {
                 toast('Target expression is required', 'error');
                 return;
             }
@@ -164,12 +228,18 @@ function alertComposer() {
                 channels: this.form.channels,
                 targets: this.form.targets,
             };
+            if (this.hasTargetTree) {
+                body.target_tree = this.targetTree;
+            }
             if (this.form.alert_type === 'poll') {
                 body.poll_question = this.form.poll_question;
                 body.poll_options = this.pollOptionsText.split('\n').map(s => s.trim()).filter(Boolean);
             }
             if (this.form.alert_type === 'ack_required') {
                 body.ack_deadline_minutes = this.form.ack_deadline_minutes;
+                if (this.form.escalation_user_id) {
+                    body.escalation_user_id = this.form.escalation_user_id;
+                }
             }
 
             const res = await api.post('/alerts', body);

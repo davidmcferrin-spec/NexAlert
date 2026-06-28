@@ -12,8 +12,10 @@ $headerActions = '
 <div x-data="alertHistoryPage()" x-init="init()">
     <div class="flex flex-wrap items-center gap-3 mb-4">
         <input type="search" placeholder="Search alerts…" x-model.debounce.300ms="search" @input="load()"
+               <?= tip_attr('Search alert subject and body text', 'bottom') ?>
                class="px-3 py-2 text-sm rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 w-64">
         <select x-model="filterSeverity" @change="load()"
+                <?= tip_attr('Filter by alert severity level', 'bottom') ?>
                 class="px-3 py-2 text-sm rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
             <option value="all">All severities</option>
             <option value="test">Test</option>
@@ -24,6 +26,7 @@ $headerActions = '
             <option value="evacuation">Evacuation</option>
         </select>
         <select x-model="filterStatus" @change="load()"
+                <?= tip_attr('Sending = dispatch in progress. Sent = all deliveries attempted.', 'bottom') ?>
                 class="px-3 py-2 text-sm rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
             <option value="all">All statuses</option>
             <option value="sending">Sending</option>

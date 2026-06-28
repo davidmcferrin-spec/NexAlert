@@ -5,7 +5,8 @@ $pageSubtitle = 'Preview alert recipients and build nested AND/OR target express
 
 <div x-data="testSendPage()" x-init="init()" class="space-y-6">
 
-    <div class="rounded-xl border border-blue-200 dark:border-blue-900/50 bg-blue-50 dark:bg-blue-950/30 px-4 py-3 text-sm text-blue-800 dark:text-blue-200">
+    <div class="rounded-xl border border-blue-200 dark:border-blue-900/50 bg-blue-50 dark:bg-blue-950/30 px-4 py-3 text-sm text-blue-800 dark:text-blue-200"
+         <?= tip_attr('Test Send resolves targets exactly like live alerts. Use Send Alert to carry expression + tree to the composer.', 'bottom') ?>>
         Build nested <strong>AND</strong> / <strong>OR</strong> groups with multiple tags, nodes, groups, and users.
         Example: <code class="font-mono text-xs">org:nexstar AND (tag:eng OR tag:noc OR group:on-call@nexstar)</code>.
         Preview uses the same resolver as live alert sends.
@@ -16,12 +17,14 @@ $pageSubtitle = 'Preview alert recipients and build nested AND/OR target express
         <!-- Nested tree builder -->
         <div class="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 overflow-hidden">
             <div class="px-5 py-4 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between gap-2 flex-wrap">
-                <h2 class="text-sm font-semibold text-gray-900 dark:text-white">Target Builder</h2>
+                <h2 class="text-sm font-semibold text-gray-900 dark:text-white"><?= tip_label('Target Builder', 'Root OR = union of branches. Each AND branch requires all its terms. Nested OR subgroups allow tag:eng OR tag:noc within one branch.') ?></h2>
                 <div class="flex items-center gap-2">
                     <button @click="addOrBranch()"
-                            class="text-xs font-medium text-red-600 hover:text-red-700 dark:text-red-400">+ OR branch</button>
+                            class="text-xs font-medium text-red-600 hover:text-red-700 dark:text-red-400"
+                            <?= tip_attr('Add another OR branch — recipients matching any branch are included', 'top') ?>>+ OR branch</button>
                     <button @click="resetTree()"
-                            class="text-xs text-gray-400 hover:text-gray-600">Reset</button>
+                            class="text-xs text-gray-400 hover:text-gray-600"
+                            <?= tip_attr('Clear builder and start with one empty AND branch', 'top') ?>>Reset</button>
                 </div>
             </div>
             <div class="p-5">
@@ -156,7 +159,7 @@ $pageSubtitle = 'Preview alert recipients and build nested AND/OR target express
                         </button>
                         <a x-show="preview.valid && expression"
                            href="/admin/alerts/new"
-                           @click="sessionStorage.setItem('nexalert_target_expression', expression)"
+                           @click="saveForComposer()"
                            class="px-3 py-1.5 text-xs font-semibold rounded-lg border border-red-600 text-red-600 hover:bg-red-50 dark:hover:bg-red-950">
                             Send Alert →
                         </a>
@@ -301,12 +304,26 @@ function testSendPage() {
 
         async init() {
             await this.loadEntities('');
-            const saved = sessionStorage.getItem('nexalert_target_expression');
-            if (saved) {
-                this.expression = saved;
+            const savedExpr = sessionStorage.getItem('nexalert_target_expression');
+            const savedTree = sessionStorage.getItem('nexalert_target_tree');
+            if (savedTree) {
+                try {
+                    this.targetTree = JSON.parse(savedTree);
+                    sessionStorage.removeItem('nexalert_target_tree');
+                } catch (e) { /* ignore */ }
+            }
+            if (savedExpr) {
+                this.expression = savedExpr;
                 sessionStorage.removeItem('nexalert_target_expression');
                 await this.syncFromExpression();
+            } else if (savedTree) {
+                await this.syncFromBuilder();
             }
+        },
+
+        saveForComposer() {
+            sessionStorage.setItem('nexalert_target_expression', this.expression);
+            sessionStorage.setItem('nexalert_target_tree', JSON.stringify(this.targetTree));
         },
 
         resetTree() {

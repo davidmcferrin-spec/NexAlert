@@ -19,6 +19,7 @@ $headerActions = '
 
     <div class="flex flex-wrap items-center gap-3 mb-4">
         <select x-model="filterActive" @change="loadTokens()"
+                <?= tip_attr('Active tokens can POST alerts via /api/v1/alert. Deactivate instead of deleting to preserve audit trail.', 'bottom') ?>
                 class="px-3 py-2 text-sm rounded-xl border border-gray-200 dark:border-gray-700
                        bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300
                        focus:outline-none focus:ring-2 focus:ring-red-500">

@@ -39,7 +39,18 @@ Resolution at alert send time: recursive CTE or iterative BFS in the dispatch wo
 - Redis — queues and pubsub only
 
 ## Current Phase
-**Phase 1** — DB schema ✅, org/group/user CRUD 🔄
+**Phase 2** — Alert send pipeline ✅, dispatch worker ✅, ack escalation ✅, AST targeting ✅, admin UI 🔄
+
+## Target Expression Engine (Phase 2)
+- `TargetAstService` — parse expressions, normalize to DNF, support nested `target_tree` JSON
+- `TargetExpressionService` — preview, compile, multi-tag AND via `conj_terms` JSON (`db/007`)
+- Test Send UI — nested OR → AND branch → OR subgroup builder
+- Alert composer accepts `targets` (expression) and/or `target_tree` from sessionStorage handoff
+
+## Ack Escalation (Phase 2)
+- `ack_deadline_at`, `escalated_at` on alerts (`db/008`)
+- Dispatch worker schedules `ack_escalate` job when alert fully sent with deadline + escalation user
+- Escalation email lists unacked recipients to `escalation_user_id`
 
 ## Migration Naming
 `/db/NNN_description.sql` — zero-padded 3 digits, e.g. `002_add_alert_templates.sql`

@@ -8,6 +8,7 @@ $pageSubtitle = 'Append-only record of all system actions';
     <div class="flex flex-wrap items-center gap-3 mb-4">
         <input type="search" placeholder="Search action, entity, user…" x-model.debounce.300ms="search"
                @input="loadEntries()"
+               <?= tip_attr('Search audit entries by action name, entity type, or actor', 'bottom') ?>
                class="px-3 py-2 text-sm rounded-xl border border-gray-200 dark:border-gray-700
                       bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-red-500 w-72">
 

@@ -1,6 +1,6 @@
 # NexAlert — Project Summary & Development Handoff
-**Last updated:** 2026-06-28  
-**Status:** Phase 1 ~80% complete, live on Dreamhost VPS
+**Last updated:** 2026-06-27  
+**Status:** Phase 2 ~70% complete, live on Dreamhost VPS
 
 ---
 
@@ -78,9 +78,11 @@ Tags are a first-class targeting entity.
 - Approval states: `pending → approved | denied`
 
 ### Alert Targeting
-`alert_targets` rows: each row ANDs non-null fields; multiple rows ORed at resolve time.
+Expressions compile to DNF → `alert_targets` rows (each row ANDs fields; multiple rows ORed).
 
-Dimensions: `org:`, `node:` (subtree), `group:` (recursive BFS), `tag:`, `user:`
+**Dimensions:** `org:`, `node:` (subtree), `group:` (recursive BFS), `tag:`, `user:`
+
+**Expression engine:** `TargetAstService` + `TargetExpressionService` support nested AND/OR, comma lists (`tag:a,b`), and `target_tree` JSON from the Test Send builder. Multi-tag AND within one conjunction uses `conj_terms` JSON column (`db/007`).
 
 Example: `(org:NewsNation AND tag:Engineering) OR (group:NOC) OR (user:42)`
 
@@ -148,6 +150,13 @@ Assignments scoped: global, per-org, or per-org-node.
 POST   /api/v1/auth/login|logout|refresh|forgot-password|reset-password
 GET    /api/v1/health
 GET    /api/v1/health/deep          (auth required)
+GET    /api/v1/dashboard/stats       (auth required — org/user/alert/token counts)
+
+POST   /api/v1/targets/preview        (expression and/or target_tree)
+GET    /api/v1/targets/entities       (autocomplete for builder)
+
+POST   /api/v1/alerts               (alert.send permission)
+GET    /api/v1/alerts
 
 GET    /api/v1/orgs
 POST   /api/v1/orgs
@@ -184,14 +193,16 @@ URL: `https://nexalert.area51consulting.com/admin`
 
 **Live pages:**
 - `/admin/login` — login + dark/light toggle
-- `/admin` — dashboard (stats, quick actions, system health)
-- `/admin/orgs` — org list + inline tree builder
-- `/admin/orgs/new`, `/admin/orgs/edit?id=N` — org CRUD
-- `/admin/users` — list, search, filter, paginate
-- `/admin/users/new`, `/admin/users/edit?id=N` — user CRUD, memberships, tags
+- `/admin` — dashboard with live stats (`GET /api/v1/dashboard/stats`), quick actions, health checks
+- `/admin/orgs` — org list + expandable org tree (add/edit nodes in modal)
+- `/admin/users`, `/admin/groups`, `/admin/tags` — full CRUD list + forms
+- `/admin/test-send` — nested AND/OR target builder, recipient preview, handoff to composer
+- `/admin/alerts/new` — alert composer (expression + target_tree, ack escalation user)
+- `/admin/alerts/history` — sent alerts, delivery/ack stats
+- `/admin/tokens` — system API token management
+- `/admin/audit` — read-only audit log
 
-**Stub pages (scaffold only):**
-- `/admin/tokens`, `/admin/audit`, `/admin/alerts`, `/admin/users/import`
+**UI tooltips:** Site-wide via `web/helpers/ui.php` (`tip_attr`, `tip_label`, `tip_icon`) and `[data-tip]` CSS in admin layout.
 
 ---
 
@@ -199,13 +210,11 @@ URL: `https://nexalert.area51consulting.com/admin`
 
 | Issue | Fix |
 |---|---|
-| Redis unavailable on Dreamhost | Rate limiter fails open (safe). Build MySQL queue table for Phase 2 dispatch worker. |
+| Redis unavailable on Dreamhost | Rate limiter fails open (safe). MySQL `jobs` queue used for dispatch. |
+| Migration 007/008 on VPS | Run `db/007_alert_target_conj_terms.sql` and `db/008_alert_escalation.sql` if not applied |
 | Email templates missing | `MailService` needs `api/src/Templates/mail/{password_reset,email_verify,sms_optin_notice}.php` |
 | `RequestResponse.php` stale | `api/src/Api/RequestResponse.php` unused — delete it |
-| `public/` directory stale | May still exist on VPS — safe to delete |
-| Group CRUD missing | Schema exists, no controller or UI yet |
-| Tag management UI missing | Assignment works but no standalone tag admin page |
-| Import UI stub | `POST /api/v1/users/import` API is complete; web UI is stub only |
+| Web Push / chat | Phase 3–4 |
 
 ---
 
@@ -213,12 +222,12 @@ URL: `https://nexalert.area51consulting.com/admin`
 
 | Phase | Status | Scope |
 |---|---|---|
-| 1 | 🔄 80% | DB schema, org/node/user CRUD, auth, admin UI skeleton |
-| 2 | ⬜ | Alert inbound API, simple+ack_required send, email+SMS, dispatch worker |
-| 3 | ⬜ | Web Push (VAPID), poll alert type |
-| 4 | ⬜ | chat + group_chat, Python WS bridge, Twilio inbound SMS |
+| 1 | ✅ Done | DB schema, org/node/user CRUD, auth, admin UI |
+| 2 | 🔄 70% | Alert API, email+SMS dispatch, ack escalation, AST targeting, composer UI |
+| 3 | ⬜ | Web Push (VAPID), poll delivery UI |
+| 4 | ⬜ | chat + group_chat, Python WS bridge, Twilio inbound SMS routing |
 | 5 | ⬜ | Azure Entra OIDC + LDAP, Entra directory import |
-| 6 | ⬜ | Alert composer UI, delivery reports, audit log UI, tag + group management |
+| 6 | ⬜ | Delivery reports, scheduled alerts, template library |
 | 7 | ⬜ | Azure production migration, FCM/PWA, hardening |
 
 ---

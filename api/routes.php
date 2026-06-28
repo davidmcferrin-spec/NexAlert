@@ -20,6 +20,7 @@ use NexAlert\Controllers\RoleController;
 use NexAlert\Controllers\ProfileController;
 use NexAlert\Controllers\AlertController;
 use NexAlert\Controllers\WebhookController;
+use NexAlert\Controllers\DashboardController;
 use NexAlert\Middleware\AuthMiddleware;
 use NexAlert\Middleware\RateLimitMiddleware;
 use NexAlert\Middleware\SystemTokenMiddleware;
@@ -31,6 +32,10 @@ return function (Router $router): void {
     // -----------------------------------------------------------------------
     $router->get('/api/v1/health',      [HealthController::class, 'ping']);
     $router->get('/api/v1/health/deep', [HealthController::class, 'deep'], [
+        AuthMiddleware::required(),
+    ]);
+
+    $router->get('/api/v1/dashboard/stats', [DashboardController::class, 'stats'], [
         AuthMiddleware::required(),
     ]);
 

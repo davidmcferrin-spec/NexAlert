@@ -27,11 +27,13 @@ $headerActions = '
     <div class="flex flex-wrap items-center gap-3 mb-4">
         <input type="search" placeholder="Search name, username…" x-model.debounce.300ms="search"
                @input="loadUsers()"
+               <?= tip_attr('Filter by display name, username, or email contact', 'bottom') ?>
                class="px-3 py-2 text-sm rounded-xl border border-gray-200 dark:border-gray-700
                       bg-white dark:bg-gray-800 text-gray-900 dark:text-white
                       focus:outline-none focus:ring-2 focus:ring-red-500 w-64">
 
         <select x-model="filterActive" @change="loadUsers()"
+                <?= tip_attr('Show active, deactivated, or all user accounts', 'bottom') ?>
                 class="px-3 py-2 text-sm rounded-xl border border-gray-200 dark:border-gray-700
                        bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300
                        focus:outline-none focus:ring-2 focus:ring-red-500">

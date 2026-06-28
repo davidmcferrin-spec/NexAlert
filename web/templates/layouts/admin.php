@@ -66,6 +66,90 @@
         .badge-warning     { @apply bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-300; }
         .badge-critical    { @apply bg-orange-100 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300; }
         .badge-evacuation  { @apply bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300; }
+
+        /* Hover tooltips — site-wide via data-tip attribute */
+        [data-tip] { position: relative; cursor: help; }
+        [data-tip]::before,
+        [data-tip]::after {
+            position: absolute;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.12s ease, transform 0.12s ease;
+            z-index: 60;
+        }
+        [data-tip]::after {
+            content: attr(data-tip);
+            max-width: 16rem;
+            padding: 0.4rem 0.55rem;
+            border-radius: 0.5rem;
+            font-size: 0.6875rem;
+            font-weight: 500;
+            line-height: 1.35;
+            color: #f9fafb;
+            background: #111827;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            white-space: normal;
+            text-align: left;
+        }
+        .dark [data-tip]::after {
+            background: #f3f4f6;
+            color: #111827;
+        }
+        [data-tip][data-tip-pos="top"]::after {
+            bottom: calc(100% + 6px);
+            left: 50%;
+            transform: translateX(-50%) translateY(4px);
+        }
+        [data-tip][data-tip-pos="bottom"]::after {
+            top: calc(100% + 6px);
+            left: 50%;
+            transform: translateX(-50%) translateY(-4px);
+        }
+        [data-tip][data-tip-pos="right"]::after {
+            left: calc(100% + 8px);
+            top: 50%;
+            transform: translateY(-50%) translateX(-4px);
+        }
+        [data-tip][data-tip-pos="left"]::after {
+            right: calc(100% + 8px);
+            top: 50%;
+            transform: translateY(-50%) translateX(4px);
+        }
+        [data-tip]:hover::after,
+        [data-tip]:focus-visible::after {
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
+        }
+        [data-tip][data-tip-pos="right"]:hover::after,
+        [data-tip][data-tip-pos="right"]:focus-visible::after {
+            transform: translateY(-50%) translateX(0);
+        }
+        [data-tip][data-tip-pos="left"]:hover::after,
+        [data-tip][data-tip-pos="left"]:focus-visible::after {
+            transform: translateY(-50%) translateX(0);
+        }
+        [data-tip][data-tip-pos="bottom"]:hover::after,
+        [data-tip][data-tip-pos="bottom"]:focus-visible::after {
+            transform: translateX(-50%) translateY(0);
+        }
+        .tip-icon {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 1rem;
+            height: 1rem;
+            border-radius: 9999px;
+            font-size: 0.625rem;
+            font-weight: 700;
+            line-height: 1;
+            color: #6b7280;
+            background: #f3f4f6;
+            flex-shrink: 0;
+        }
+        .dark .tip-icon {
+            color: #9ca3af;
+            background: #1f2937;
+        }
     </style>
     <?= $headExtra ?? '' ?>
 </head>
@@ -97,18 +181,18 @@
 
             <?php
             $navItems = [
-                ['href' => '/admin', 'label' => 'Dashboard', 'icon' => 'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6'],
-                ['href' => '/admin/orgs', 'label' => 'Organizations', 'icon' => 'M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-2 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4'],
-                ['href' => '/admin/users', 'label' => 'Users', 'icon' => 'M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z'],
-                ['href' => '/admin/groups', 'label' => 'Groups', 'icon' => 'M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z'],
-                ['href' => '/admin/tags', 'label' => 'Tags', 'icon' => 'M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-5 5a2 2 0 01-2.828 0l-7-7A2 2 0 013 8V5a2 2 0 012-2z'],
+                ['href' => '/admin', 'label' => 'Dashboard', 'icon' => 'M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6', 'tip' => 'System overview, quick actions, and health checks'],
+                ['href' => '/admin/orgs', 'label' => 'Organizations', 'icon' => 'M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-2 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4', 'tip' => 'Manage org hierarchy: regions, markets, sites, and departments'],
+                ['href' => '/admin/users', 'label' => 'Users', 'icon' => 'M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M13 7a4 4 0 11-8 0 4 4 0 018 0z', 'tip' => 'Create users, assign home org, roles, and org memberships'],
+                ['href' => '/admin/groups', 'label' => 'Groups', 'icon' => 'M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z', 'tip' => 'Static recipient groups; can nest groups for complex targeting'],
+                ['href' => '/admin/tags', 'label' => 'Tags', 'icon' => 'M7 7h.01M7 3h5c.512 0 1.024.195 1.414.586l7 7a2 2 0 010 2.828l-5 5a2 2 0 01-2.828 0l-7-7A2 2 0 013 8V5a2 2 0 012-2z', 'tip' => 'Skill and role tags for alert targeting and auto-inheritance from org nodes'],
                 'divider',
-                ['href' => '/admin/test-send', 'label' => 'Test Send', 'icon' => 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4'],
-                ['href' => '/admin/alerts/new', 'label' => 'Send Alert', 'icon' => 'M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z', 'highlight' => true],
-                ['href' => '/admin/alerts/history', 'label' => 'Alert History', 'icon' => 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2'],
+                ['href' => '/admin/test-send', 'label' => 'Test Send', 'icon' => 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4', 'tip' => 'Build AND/OR target expressions, preview recipients, copy API payload'],
+                ['href' => '/admin/alerts/new', 'label' => 'Send Alert', 'icon' => 'M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z', 'highlight' => true, 'tip' => 'Compose and dispatch a live alert to selected recipients'],
+                ['href' => '/admin/alerts/history', 'label' => 'Alert History', 'icon' => 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2', 'tip' => 'Past alerts, delivery status, ack counts, and cancellation'],
                 'divider',
-                ['href' => '/admin/tokens', 'label' => 'API Tokens', 'icon' => 'M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z'],
-                ['href' => '/admin/audit', 'label' => 'Audit Log', 'icon' => 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z'],
+                ['href' => '/admin/tokens', 'label' => 'API Tokens', 'icon' => 'M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z', 'tip' => 'System tokens for CheckMK, XPression, and other automated senders'],
+                ['href' => '/admin/audit', 'label' => 'Audit Log', 'icon' => 'M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z', 'tip' => 'Append-only record of admin and API actions'],
             ];
 
             $currentPath = strtok($_SERVER['REQUEST_URI'] ?? '/', '?');
@@ -123,6 +207,7 @@
                 $highlight = $item['highlight'] ?? false;
             ?>
                 <a href="<?= $item['href'] ?>"
+                   <?= nav_tip_attr($item['tip'] ?? null) ?>
                    class="flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors
                           <?= $isActive
                               ? 'bg-brand-600 text-white'
@@ -144,6 +229,7 @@
 
             <!-- Theme toggle -->
             <button @click="toggleDark()"
+                    <?= tip_attr('Switch between light and dark admin theme', 'right') ?>
                     class="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm text-gray-600 dark:text-gray-400
                            hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors">
                 <svg x-show="!darkMode" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
