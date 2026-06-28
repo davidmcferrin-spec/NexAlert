@@ -34,8 +34,7 @@ $res = $raw ? json_decode($raw, true) : null;
 
 if ($res && $res['success']) {
     flash($isEdit ? 'Group updated.' : 'Group created.');
-    $newId = $isEdit ? $id : (int) ($res['data']['id'] ?? 0);
-    header('Location: ' . ($newId ? "/admin/groups/edit?id={$newId}" : '/admin/groups'));
+    header('Location: ' . ($isEdit && $id ? "/admin/groups/edit?id={$id}" : '/admin/groups'));
 } else {
     $err = $res['error'] ?? 'Save failed.';
     if (!empty($res['errors'])) {

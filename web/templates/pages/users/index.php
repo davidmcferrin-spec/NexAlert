@@ -130,7 +130,10 @@ function usersPage() {
         search: '', filterActive: '1',
         limit: 50, offset: 0,
 
-        async init()     { await this.loadUsers(); },
+        async init() {
+            registerPageRefresh(() => this.loadUsers());
+            await this.loadUsers();
+        },
         async prevPage() { this.offset = Math.max(0, this.offset - this.limit); await this.loadUsers(); },
         async nextPage() { this.offset += this.limit; await this.loadUsers(); },
 

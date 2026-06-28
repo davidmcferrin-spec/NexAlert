@@ -164,6 +164,55 @@ if ($isEdit) {
             </ul>
         </div>
     </div>
+
+    <!-- Delete group -->
+    <div class="bg-white dark:bg-gray-900 rounded-2xl border border-red-200 dark:border-red-900/50 overflow-hidden">
+        <div class="px-6 py-4 border-b border-red-100 dark:border-red-900/30">
+            <h2 class="text-sm font-semibold text-red-700 dark:text-red-400">Danger zone</h2>
+        </div>
+        <div class="p-6 flex items-center justify-between gap-4">
+            <p class="text-sm text-gray-500 dark:text-gray-400">
+                Delete this group. It will be deactivated and removed from alert targeting.
+            </p>
+            <button type="button" @click="deleteGroup()"
+                    class="flex-shrink-0 px-4 py-2 text-sm font-semibold text-red-600 border border-red-300
+                           dark:border-red-800 rounded-xl hover:bg-red-50 dark:hover:bg-red-950/40">
+                Delete group
+            </button>
+        </div>
+    </div>
+
+    <!-- Second confirm when group has members or nested groups -->
+    <div x-show="pendingDelete" x-cloak
+         class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
+         @keydown.escape.window="pendingDelete = false">
+        <div class="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700
+                    shadow-xl max-w-md w-full p-6">
+            <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-2">Group not empty</h3>
+            <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">
+                <span class="font-medium"><?= htmlspecialchars($group['name'] ?? '') ?></span> still has:
+            </p>
+            <ul class="text-sm text-gray-600 dark:text-gray-400 space-y-1 mb-6">
+                <li x-show="members.length > 0">
+                    <span x-text="members.length"></span> direct member(s)
+                </li>
+                <li x-show="childGroups.length > 0">
+                    <span x-text="childGroups.length"></span> nested group(s)
+                </li>
+            </ul>
+            <p class="text-sm text-gray-500 dark:text-gray-400 mb-6">
+                Deleting removes this group from targeting. Members are not removed from NexAlert.
+            </p>
+            <div class="flex justify-end gap-3">
+                <button @click="pendingDelete = false"
+                        class="px-4 py-2 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900">Cancel</button>
+                <button @click="confirmDelete()" :disabled="deleting"
+                        class="px-4 py-2 text-sm font-semibold bg-red-600 hover:bg-red-700 text-white rounded-xl disabled:opacity-60">
+                    <span x-text="deleting ? 'Deleting…' : 'Delete anyway'"></span>
+                </button>
+            </div>
+        </div>
+    </div>
     <?php endif; ?>
 </div>
 
@@ -171,11 +220,13 @@ if ($isEdit) {
 function groupForm(isEdit, groupId) {
     return {
         isEdit, groupId,
+        groupName: <?= json_encode($group['name'] ?? '', JSON_THROW_ON_ERROR) ?>,
         members: <?= json_encode($group['members'] ?? [], JSON_THROW_ON_ERROR) ?>,
         childGroups: <?= json_encode($group['child_groups'] ?? [], JSON_THROW_ON_ERROR) ?>,
         allGroups: [],
         userSearch: '', userResults: [],
         selectedChildId: '',
+        pendingDelete: false, deleting: false,
 
         async init() {
             if (this.isEdit) {
@@ -249,6 +300,35 @@ function groupForm(isEdit, groupId) {
                 toast('Child group removed');
             } else {
                 toast(res.data.error || 'Failed', 'error');
+            }
+        },
+
+        deleteGroup() {
+            if (!confirm(`Delete group "${this.groupName}"? It will be deactivated and removed from targeting.`)) return;
+
+            if (this.members.length > 0 || this.childGroups.length > 0) {
+                this.pendingDelete = true;
+                return;
+            }
+
+            this.performDelete();
+        },
+
+        confirmDelete() {
+            if (this.deleting) return;
+            this.performDelete();
+        },
+
+        async performDelete() {
+            this.deleting = true;
+            const res = await api.delete(`/groups/${this.groupId}`);
+            this.deleting = false;
+            if (res.ok) {
+                toast(`${this.groupName} deleted`);
+                window.location.href = '/admin/groups';
+            } else {
+                toast(res.data?.error || 'Failed to delete group', 'error');
+                this.pendingDelete = false;
             }
         },
     };

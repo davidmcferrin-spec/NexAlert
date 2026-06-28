@@ -197,7 +197,10 @@ function tagsPage() {
             return true;
         },
 
-        async init()     { await this.loadTags(); },
+        async init() {
+            registerPageRefresh(() => this.loadTags());
+            await this.loadTags();
+        },
         async prevPage() { this.offset = Math.max(0, this.offset - this.limit); await this.loadTags(); },
         async nextPage() { this.offset += this.limit; await this.loadTags(); },
 

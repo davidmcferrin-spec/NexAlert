@@ -74,9 +74,9 @@ $headerActions = '
                                 <div class="flex items-center justify-end gap-2 flex-wrap">
                                     <a :href="'/admin/groups/edit?id=' + group.id"
                                        class="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">Edit</a>
-                                    <button @click="deactivate(group)"
-                                            class="text-xs text-amber-600 hover:text-amber-800 dark:text-amber-400"
-                                            x-show="isActive(group.is_active)">Deactivate</button>
+                                    <button @click="deleteGroup(group)"
+                                            class="text-xs text-red-500 hover:text-red-700 dark:text-red-400"
+                                            x-show="isActive(group.is_active)">Delete</button>
                                     <button @click="reactivate(group)"
                                             class="text-xs text-green-600 hover:text-green-800 dark:text-green-400"
                                             x-show="!isActive(group.is_active)">Reactivate</button>
@@ -106,6 +106,38 @@ $headerActions = '
             </div>
         </div>
     </div>
+
+    <!-- Second confirm when group has members or nested groups -->
+    <div x-show="pendingDelete" x-cloak
+         class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
+         @keydown.escape.window="pendingDelete = null">
+        <div class="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700
+                    shadow-xl max-w-md w-full p-6" @click.outside="pendingDelete = null">
+            <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-2">Group not empty</h3>
+            <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">
+                <span class="font-medium" x-text="pendingDelete?.name"></span> still has:
+            </p>
+            <ul class="text-sm text-gray-600 dark:text-gray-400 space-y-1 mb-6">
+                <li x-show="(pendingDelete?.member_count || 0) > 0">
+                    <span x-text="pendingDelete?.member_count"></span> direct member(s)
+                </li>
+                <li x-show="(pendingDelete?.child_group_count || 0) > 0">
+                    <span x-text="pendingDelete?.child_group_count"></span> nested group(s)
+                </li>
+            </ul>
+            <p class="text-sm text-gray-500 dark:text-gray-400 mb-6">
+                Deleting removes this group from targeting. Members are not removed from NexAlert.
+            </p>
+            <div class="flex justify-end gap-3">
+                <button @click="pendingDelete = null"
+                        class="px-4 py-2 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900">Cancel</button>
+                <button @click="confirmDelete()" :disabled="deleting"
+                        class="px-4 py-2 text-sm font-semibold bg-red-600 hover:bg-red-700 text-white rounded-xl disabled:opacity-60">
+                    <span x-text="deleting ? 'Deleting…' : 'Delete anyway'"></span>
+                </button>
+            </div>
+        </div>
+    </div>
 </div>
 
 <script>
@@ -114,8 +146,12 @@ function groupsPage() {
         groups: [], total: 0, loading: true,
         search: '', filterActive: '1',
         limit: 50, offset: 0,
+        pendingDelete: null, deleting: false,
 
-        async init()     { await this.loadGroups(); },
+        async init() {
+            registerPageRefresh(() => this.loadGroups());
+            await this.loadGroups();
+        },
         async prevPage() { this.offset = Math.max(0, this.offset - this.limit); await this.loadGroups(); },
         async nextPage() { this.offset += this.limit; await this.loadGroups(); },
 
@@ -133,14 +169,35 @@ function groupsPage() {
             this.loading = false;
         },
 
-        async deactivate(group) {
-            if (!confirm(`Deactivate group "${group.name}"?`)) return;
+        async deleteGroup(group) {
+            if (!confirm(`Delete group "${group.name}"? It will be deactivated and removed from targeting.`)) return;
+
+            const members = Number(group.member_count) || 0;
+            const children = Number(group.child_group_count) || 0;
+
+            if (members > 0 || children > 0) {
+                this.pendingDelete = group;
+                return;
+            }
+
+            await this.performDelete(group);
+        },
+
+        async confirmDelete() {
+            if (!this.pendingDelete || this.deleting) return;
+            await this.performDelete(this.pendingDelete);
+            this.pendingDelete = null;
+        },
+
+        async performDelete(group) {
+            this.deleting = true;
             const res = await api.delete(`/groups/${group.id}`);
+            this.deleting = false;
             if (res.ok) {
-                toast(`${group.name} deactivated`);
+                toast(`${group.name} deleted`);
                 await this.loadGroups();
             } else {
-                toast(res.data?.error || 'Failed to deactivate', 'error');
+                toast(res.data?.error || 'Failed to delete group', 'error');
             }
         },
 

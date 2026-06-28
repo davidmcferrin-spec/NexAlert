@@ -56,7 +56,7 @@ const api = {
     async request(method, path, body) {
         const opts = { method, headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + this.token } };
         if (body) opts.body = JSON.stringify(body);
-        const res = await fetch('/api/v1' + path, opts);
+        const res = await fetch('/api/v1' + path, { ...opts, cache: 'no-store' });
         const data = await res.json();
         if (res.status === 401) { window.location.href = '/admin/login?redirect=' + encodeURIComponent(location.pathname); throw new Error('auth'); }
         return { ok: res.ok, status: res.status, data };

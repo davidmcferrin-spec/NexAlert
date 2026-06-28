@@ -326,7 +326,7 @@ const api = {
         };
         if (body) opts.body = JSON.stringify(body);
 
-        const res = await fetch('/api/v1' + path, opts);
+        const res = await fetch('/api/v1' + path, { ...opts, cache: 'no-store' });
         const data = await res.json();
 
         if (res.status === 401) {
@@ -345,6 +345,26 @@ const api = {
 };
 
 api.init(<?= json_encode($_SESSION['access_token'] ?? '', JSON_THROW_ON_ERROR) ?>);
+
+// -----------------------------------------------------------------------
+// Page refresh — list pages register a reload fn; called on bfcache restore
+// and when returning to a background tab so tables stay current after creates.
+// -----------------------------------------------------------------------
+window.__nexalertPageRefresh = null;
+
+function registerPageRefresh(fn) {
+    window.__nexalertPageRefresh = fn;
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    window.__nexalertPageRefresh = null;
+});
+
+window.addEventListener('pageshow', (e) => {
+    if (e.persisted && typeof window.__nexalertPageRefresh === 'function') {
+        window.__nexalertPageRefresh();
+    }
+});
 
 // -----------------------------------------------------------------------
 // Root Alpine app - theme management

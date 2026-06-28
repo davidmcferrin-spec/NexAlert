@@ -38,8 +38,7 @@ $res = $raw ? json_decode($raw, true) : null;
 
 if ($res && $res['success']) {
     flash($isEdit ? 'Tag updated.' : 'Tag created.');
-    $newId = $isEdit ? $id : (int) ($res['data']['id'] ?? 0);
-    header('Location: ' . ($newId ? "/admin/tags/edit?id={$newId}" : '/admin/tags'));
+    header('Location: ' . ($isEdit && $id ? "/admin/tags/edit?id={$id}" : '/admin/tags'));
 } else {
     $err = $res['error'] ?? 'Save failed.';
     if (!empty($res['errors'])) {
