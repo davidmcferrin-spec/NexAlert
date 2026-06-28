@@ -247,50 +247,106 @@ def build_sms_body(alert: dict) -> str:
     return msg
 
 
-def send_web_push(delivery: dict, alert: dict, alert_id: int, conn) -> None:
-    """Send Web Push notification via pywebpush (optional dependency)."""
+def _webpush_send(
+    conn,
+    delivery: dict,
+    title: str,
+    body: str,
+    url: str,
+    subscription_id: int | None = None,
+) -> None:
+    """Send one Web Push notification."""
     try:
         from pywebpush import WebPushException, webpush  # type: ignore
     except ImportError as exc:
         raise RuntimeError("Install pywebpush: pip install pywebpush") from exc
 
     private_key = env("VAPID_PRIVATE_KEY", "")
-    subject = env("VAPID_SUBJECT", "mailto:nexalert@example.com")
+    vapid_subject = env("VAPID_SUBJECT", "mailto:nexalert@example.com")
     if not private_key:
         raise RuntimeError("VAPID_PRIVATE_KEY not configured")
 
-    app_url = env("APP_URL", "").rstrip("/")
-    payload = json.dumps({
-        "title": f"NexAlert: {alert.get('subject', 'Alert')}",
-        "body": (alert.get("body") or "")[:180],
-        "url": f"{app_url}/profile?alert={alert_id}",
-    })
-
+    payload = json.dumps({"title": title, "body": body[:180], "url": url})
     subscription = {
         "endpoint": delivery["endpoint"],
-        "keys": {
-            "p256dh": delivery["p256dh"],
-            "auth": delivery["auth_key"],
-        },
+        "keys": {"p256dh": delivery["p256dh"], "auth": delivery["auth_key"]},
     }
+    sub_id = subscription_id or delivery.get("push_subscription_id")
 
     try:
         webpush(
             subscription_info=subscription,
             data=payload,
             vapid_private_key=private_key,
-            vapid_claims={"sub": subject},
+            vapid_claims={"sub": vapid_subject},
         )
-    except WebPushException as exc:
-        status = getattr(getattr(exc, "response", None), "status_code", None)
-        if status == 410:
+        if sub_id:
             with conn.cursor() as cur:
                 cur.execute(
-                    "UPDATE push_subscriptions SET is_active = 0, failed_count = failed_count + 1 WHERE id = %s",
-                    (delivery.get("push_subscription_id"),),
+                    "UPDATE push_subscriptions SET last_used_at = NOW(), failed_count = 0 WHERE id = %s",
+                    (sub_id,),
                 )
                 conn.commit()
+    except WebPushException as exc:
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+        if sub_id:
+            with conn.cursor() as cur:
+                if status == 410:
+                    cur.execute(
+                        "UPDATE push_subscriptions SET is_active = 0, failed_count = failed_count + 1 WHERE id = %s",
+                        (sub_id,),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        UPDATE push_subscriptions
+                        SET failed_count = failed_count + 1,
+                            is_active = IF(failed_count + 1 >= 5, 0, is_active)
+                        WHERE id = %s
+                        """,
+                        (sub_id,),
+                    )
+                conn.commit()
         raise
+
+
+def send_web_push(delivery: dict, alert: dict, alert_id: int, conn) -> None:
+    """Alert delivery push payload."""
+    app_url = env("APP_URL", "").rstrip("/")
+    title = f"NexAlert: {alert.get('subject', 'Alert')}"
+    body = (alert.get("body") or "")[:180]
+    url = f"{app_url}/profile?alert={alert_id}"
+    _webpush_send(conn, delivery, title, body, url, delivery.get("push_subscription_id"))
+
+
+def process_push_notify(conn, user_id: int, title: str, body: str, url: str):
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT id, endpoint, p256dh, auth_key
+            FROM push_subscriptions
+            WHERE user_id = %s AND is_active = 1
+            """,
+            (user_id,),
+        )
+        subs = cur.fetchall()
+
+    if not subs:
+        log.info("push_notify: user %s has no active subscriptions", user_id)
+        return
+
+    for sub in subs:
+        delivery = {
+            "endpoint": sub["endpoint"],
+            "p256dh": sub["p256dh"],
+            "auth_key": sub["auth_key"],
+            "push_subscription_id": sub["id"],
+        }
+        try:
+            _webpush_send(conn, delivery, title, body, url, int(sub["id"]))
+            log.info("push_notify sent to user %s sub %s", user_id, sub["id"])
+        except Exception as exc:
+            log.warning("push_notify failed user %s sub %s: %s", user_id, sub["id"], exc)
 
 
 def process_dispatch_alert(conn, alert_id: int):
@@ -360,12 +416,6 @@ def process_dispatch_alert(conn, alert_id: int):
                     raise RuntimeError("Missing push subscription for delivery")
                 send_web_push(d, alert, alert_id, conn)
                 provider_id = None
-                with conn.cursor() as cur:
-                    cur.execute(
-                        "UPDATE push_subscriptions SET last_used_at = NOW(), failed_count = 0 WHERE id = %s",
-                        (d.get("push_subscription_id"),),
-                    )
-                    conn.commit()
             elif d["channel"] == "in_app":
                 provider_id = None
             else:
@@ -906,6 +956,14 @@ def process_job(conn, job: dict):
         process_sms_optin(conn, int(data["contact_id"]), int(data["user_id"]))
     elif job_type == "alert_expire":
         process_alert_expire(conn, int(data["alert_id"]))
+    elif job_type == "push_notify":
+        process_push_notify(
+            conn,
+            int(data["user_id"]),
+            str(data.get("title") or "NexAlert"),
+            str(data.get("body") or ""),
+            str(data.get("url") or env("APP_URL", "").rstrip("/") + "/profile"),
+        )
     else:
         raise RuntimeError(f"Unknown job type: {job_type}")
 

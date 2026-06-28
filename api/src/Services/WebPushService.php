@@ -38,7 +38,7 @@ class WebPushService
     public static function listSubscriptions(Database $db, int $userId): array
     {
         return $db->fetchAll(
-            'SELECT id, device_label, user_agent, is_active, last_used_at, created_at
+            'SELECT id, device_label, user_agent, is_active, failed_count, last_used_at, created_at
              FROM push_subscriptions
              WHERE user_id = ? AND is_active = 1
              ORDER BY created_at DESC',

@@ -61,6 +61,31 @@ $pageSubtitle = 'System overview';
         </div>
     </div>
 
+    <!-- Push delivery (7 days) -->
+    <div>
+        <h2 class="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">
+            Web Push (7 days)
+        </h2>
+        <div class="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <div class="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 p-5">
+                <div class="text-2xl font-bold" x-text="pushStats.active_subscriptions ?? '—'"></div>
+                <div class="text-sm text-gray-500 mt-0.5">Active devices</div>
+            </div>
+            <div class="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 p-5">
+                <div class="text-2xl font-bold" x-text="pushStats.push_sent_7d ?? '—'"></div>
+                <div class="text-sm text-gray-500 mt-0.5">Push sent</div>
+            </div>
+            <div class="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 p-5">
+                <div class="text-2xl font-bold text-red-600" x-text="pushStats.push_failed_7d ?? '—'"></div>
+                <div class="text-sm text-gray-500 mt-0.5">Push failed</div>
+            </div>
+            <div class="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 p-5">
+                <div class="text-2xl font-bold text-gray-400" x-text="pushStats.inactive_subscriptions ?? '—'"></div>
+                <div class="text-sm text-gray-500 mt-0.5">Inactive devices</div>
+            </div>
+        </div>
+    </div>
+
     <!-- System status -->
     <div>
         <h2 class="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wider mb-3">
@@ -93,6 +118,7 @@ function dashboard() {
             { label: 'API Tokens',    value: null, icon: 'M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z', link: '/admin/tokens', tip: 'Active system tokens for automated senders' },
         ],
         checks: [],
+        pushStats: {},
         async init() {
             let pendingJobs = 0;
             const statsRes = await api.get('/dashboard/stats');
@@ -103,6 +129,12 @@ function dashboard() {
                 this.statCards[2].value = d.alerts_sent ?? 0;
                 this.statCards[3].value = d.tokens ?? 0;
                 pendingJobs = d.pending_jobs ?? 0;
+                this.pushStats = {
+                    active_subscriptions: d.active_subscriptions,
+                    inactive_subscriptions: d.inactive_subscriptions,
+                    push_sent_7d: d.push_sent_7d,
+                    push_failed_7d: d.push_failed_7d,
+                };
             }
 
             const res = await api.get('/health/deep');

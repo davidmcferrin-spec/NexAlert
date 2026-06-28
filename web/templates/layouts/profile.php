@@ -40,6 +40,8 @@
         <div class="flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg text-sm font-medium max-w-sm border"
              :class="toast.type === 'error'
                 ? 'bg-red-50 dark:bg-red-950 border-red-200 dark:border-red-800 text-red-700 dark:text-red-400'
+                : toast.type === 'info'
+                ? 'bg-blue-50 dark:bg-blue-950 border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-300'
                 : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-900 dark:text-gray-100'"
              x-transition>
             <span x-text="toast.message" class="flex-1"></span>
@@ -67,6 +69,11 @@ const api = {
     delete: (p) => api.request('DELETE', p),
 };
 api.init(<?= json_encode($_SESSION['access_token'] ?? '', JSON_THROW_ON_ERROR) ?>);
+</script>
+<?php if (web_auth()): ?>
+<script src="/notify-client.js"></script>
+<?php endif; ?>
+<script>
 function nexalert() {
     return {
         darkMode: localStorage.getItem('nexalert_dark') === '1',

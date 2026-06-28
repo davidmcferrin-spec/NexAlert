@@ -94,7 +94,7 @@ $headerActions = '
     </div>
 
     <div x-show="detail" x-cloak class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
-         @keydown.escape.window="detail = null">
+         @keydown.escape.window="closeDetail()">
         <div class="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 shadow-xl max-w-5xl w-full max-h-[90vh] overflow-hidden flex flex-col">
             <div class="px-6 py-4 border-b border-gray-100 dark:border-gray-800 flex items-start justify-between gap-4">
                 <div class="min-w-0">
@@ -110,7 +110,7 @@ $headerActions = '
                         <span x-show="detail?.expires_at"> · expires <span x-text="formatDate(detail?.expires_at)"></span></span>
                     </p>
                 </div>
-                <button @click="detail = null" class="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
+                <button @click="closeDetail()" class="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
             </div>
 
             <div class="flex-1 overflow-y-auto px-6 py-4 space-y-4">
@@ -253,7 +253,7 @@ $headerActions = '
                                 @click="closeChat(detail)"
                                 class="text-xs text-amber-600 hover:underline">Close thread</button>
                     </div>
-                    <div class="max-h-56 overflow-y-auto rounded-xl border border-gray-200 dark:border-gray-800 p-3 space-y-2 text-xs mb-2">
+                    <div class="max-h-56 overflow-y-auto rounded-xl border border-gray-200 dark:border-gray-800 p-3 space-y-2 text-xs mb-2" id="chat-scroll-box">
                         <template x-for="m in (detail.chat?.messages || [])" :key="m.id">
                             <div>
                                 <strong x-text="m.user_name"></strong>
@@ -264,12 +264,19 @@ $headerActions = '
                         </template>
                         <p x-show="!(detail.chat?.messages || []).length" class="text-gray-400">No messages yet.</p>
                     </div>
+                    <div x-show="detail.chat?.thread?.is_open == 1" class="flex gap-2 mb-2">
+                        <input type="text" x-model="chatDraft" placeholder="Reply to thread…"
+                               @keydown.enter.prevent="sendChatFromModal()"
+                               class="flex-1 px-3 py-2 text-sm rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800">
+                        <button @click="sendChatFromModal()"
+                                class="px-4 py-2 text-xs font-semibold bg-red-600 text-white rounded-xl">Send</button>
+                    </div>
                     <p x-show="detail.chat?.thread?.is_open == 0" class="text-xs text-amber-600">Thread closed</p>
                 </div>
             </div>
 
             <div class="px-6 py-3 border-t border-gray-100 dark:border-gray-800 text-right">
-                <button @click="detail = null" class="text-sm text-gray-500 hover:text-gray-700">Close</button>
+                <button @click="closeDetail()" class="text-sm text-gray-500 hover:text-gray-700">Close</button>
             </div>
         </div>
     </div>
@@ -280,7 +287,7 @@ function alertHistoryPage() {
     return {
         alerts: [], loading: true, search: '', filterSeverity: 'all', filterStatus: 'all',
         detail: null, actionId: null, deliveryFilter: 'all', deliverySearch: '',
-        ackUserIds: [],
+        ackUserIds: [], chatDraft: '', chatPollTimer: null,
         async init() { await this.load(); },
         severityClass(s) {
             const m = { test: 'bg-gray-100 text-gray-600', info: 'bg-blue-100 text-blue-700',
@@ -355,14 +362,65 @@ function alertHistoryPage() {
             this.loading = false;
         },
         async viewDetail(a) {
+            this.stopChatPoll();
             this.deliveryFilter = 'all';
             this.deliverySearch = '';
+            this.chatDraft = '';
             const res = await api.get('/alerts/' + a.id);
             if (res.ok) {
                 const d = res.data.data;
                 this.ackUserIds = (d.acks || []).map(x => Number(x.user_id));
                 this.detail = { ...d, failed_count: a.failed_count, recipient_count: a.recipient_count ?? d.recipient_count };
+                if (['chat', 'group_chat'].includes(d.alert_type) && d.chat?.thread?.is_open == 1) {
+                    this.startChatPoll();
+                }
             } else toast(res.data?.error || 'Failed', 'error');
+        },
+        closeDetail() {
+            this.stopChatPoll();
+            this.detail = null;
+        },
+        startChatPoll() {
+            this.stopChatPoll();
+            this.chatPollTimer = setInterval(() => this.refreshChatMessages(), 5000);
+        },
+        stopChatPoll() {
+            if (this.chatPollTimer) {
+                clearInterval(this.chatPollTimer);
+                this.chatPollTimer = null;
+            }
+        },
+        lastChatAt() {
+            const msgs = this.detail?.chat?.messages || [];
+            if (!msgs.length) return null;
+            return msgs[msgs.length - 1].created_at;
+        },
+        async refreshChatMessages() {
+            if (!this.detail?.id || !['chat', 'group_chat'].includes(this.detail.alert_type)) return;
+            let url = '/alerts/' + this.detail.id + '/chat/messages';
+            const since = this.lastChatAt();
+            if (since) url += '?since=' + encodeURIComponent(since);
+            const res = await api.get(url);
+            if (!res.ok) return;
+            const incoming = res.data.data.messages || [];
+            if (!incoming.length) return;
+            const existing = this.detail.chat?.messages || [];
+            const ids = new Set(existing.map(m => m.id));
+            this.detail.chat.messages = existing.concat(incoming.filter(m => !ids.has(m.id)));
+        },
+        async sendChatFromModal() {
+            const body = (this.chatDraft || '').trim();
+            if (!body || !this.detail?.id) return;
+            const res = await api.post('/alerts/' + this.detail.id + '/chat/messages', { body });
+            if (res.ok) {
+                this.chatDraft = '';
+                const full = await api.get('/alerts/' + this.detail.id + '/chat/messages');
+                if (full.ok) {
+                    this.detail.chat = full.data.data;
+                }
+            } else {
+                toast(res.data?.error || 'Send failed', 'error');
+            }
         },
         async closeChat(d) {
             if (!confirm('Close this chat thread? Recipients can no longer reply.')) return;
@@ -379,7 +437,7 @@ function alertHistoryPage() {
             this.actionId = null;
             if (res.ok) {
                 toast('Alert cancelled');
-                if (fromModal) this.detail = null;
+                if (fromModal) this.closeDetail();
                 await this.load();
             } else toast(res.data?.error || 'Cancel failed', 'error');
         },
@@ -390,7 +448,7 @@ function alertHistoryPage() {
             this.actionId = null;
             if (res.ok) {
                 toast('Alert re-queued');
-                if (fromModal) this.detail = null;
+                if (fromModal) this.closeDetail();
                 await this.load();
             } else toast(res.data?.error || 'Retry failed', 'error');
         },
@@ -401,7 +459,7 @@ function alertHistoryPage() {
             this.actionId = null;
             if (res.ok) {
                 toast('Alert deleted');
-                if (fromModal) this.detail = null;
+                if (fromModal) this.closeDetail();
                 await this.load();
             } else toast(res.data?.error || 'Delete failed', 'error');
         }

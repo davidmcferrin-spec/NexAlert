@@ -380,6 +380,8 @@
                     max-w-sm border"
              :class="toast.type === 'error'
                 ? 'bg-red-50 dark:bg-red-950 border-red-200 dark:border-red-800 text-red-700 dark:text-red-400'
+                : toast.type === 'info'
+                ? 'bg-blue-50 dark:bg-blue-950 border-blue-200 dark:border-blue-800 text-blue-800 dark:text-blue-300'
                 : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-900 dark:text-gray-100'"
              x-transition:enter="transition ease-out duration-200"
              x-transition:enter-start="opacity-0 translate-x-4"
@@ -439,7 +441,9 @@ const api = {
 };
 
 api.init(<?= json_encode($_SESSION['access_token'] ?? '', JSON_THROW_ON_ERROR) ?>);
-
+</script>
+<script src="/notify-client.js"></script>
+<script>
 // -----------------------------------------------------------------------
 // Page refresh — list pages register a reload fn; called on bfcache restore
 // and when returning to a background tab so tables stay current after creates.

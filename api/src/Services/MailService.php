@@ -89,6 +89,29 @@ class MailService
         self::send($toEmail, $subject, $body);
     }
 
+    public static function sendChatReplyNotify(
+        string $toEmail,
+        string $alertSubject,
+        string $senderName,
+        string $messageBody,
+        string $profileUrl
+    ): void {
+        $app  = Env::get('APP_NAME', 'NexAlert');
+        $subj = "[{$app}] Chat reply: {$alertSubject}";
+        $safeSubject = htmlspecialchars($alertSubject, ENT_QUOTES, 'UTF-8');
+        $safeSender  = htmlspecialchars($senderName, ENT_QUOTES, 'UTF-8');
+        $safeBody    = nl2br(htmlspecialchars($messageBody, ENT_QUOTES, 'UTF-8'));
+        $safeUrl     = htmlspecialchars($profileUrl, ENT_QUOTES, 'UTF-8');
+
+        $html = <<<HTML
+<p><strong>{$safeSender}</strong> replied on <strong>{$safeSubject}</strong>:</p>
+<div style="margin:16px 0;padding:12px;background:#f3f4f6;border-radius:8px;">{$safeBody}</div>
+<p><a href="{$safeUrl}" style="background:#e51c1c;color:#fff;padding:10px 18px;text-decoration:none;border-radius:8px;">View conversation</a></p>
+HTML;
+
+        self::send($toEmail, $subj, $html);
+    }
+
     /**
      * Send SMS opt-in message body (used by dispatch worker via Twilio directly).
      */

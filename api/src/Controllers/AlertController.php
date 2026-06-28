@@ -172,7 +172,13 @@ class AlertController
 
         self::assertAlertAccess($request, $alertId, $db);
 
-        $result = ChatService::listMessages($db, $alertId, $userId);
+        $result = ChatService::listMessages(
+            $db,
+            $alertId,
+            $userId,
+            min((int) $request->query('limit', 100), 200),
+            $request->query('since') !== null ? (string) $request->query('since') : null
+        );
 
         Response::success($result);
     }

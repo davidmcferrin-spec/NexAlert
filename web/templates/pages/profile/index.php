@@ -67,6 +67,11 @@ $severities = ['test', 'info', 'notice', 'warning', 'critical', 'evacuation'];
                     class="px-4 py-2 text-sm font-semibold bg-red-600 text-white rounded-xl disabled:opacity-50">
                 <span x-text="pushBusy ? 'Enabling…' : 'Enable push on this device'"></span>
             </button>
+            <button x-show="notifyPermission !== 'granted'" @click="enableBrowserNotify()"
+                    class="px-4 py-2 text-sm font-semibold bg-gray-100 dark:bg-gray-800 rounded-xl">
+                Enable browser notifications
+            </button>
+            <span x-show="notifyPermission === 'granted'" class="text-xs text-green-600 self-center">Browser notifications on</span>
         </div>
         <ul x-show="pushSubscriptions.length" class="text-sm divide-y divide-gray-100 dark:divide-gray-800">
             <template x-for="s in pushSubscriptions" :key="s.id">
@@ -262,7 +267,8 @@ function profilePage() {
     return {
         profile: {}, myAlerts: [], notificationPrefs: [],
         pushSubscriptions: [], pushConfigured: false, pushBusy: false,
-        openChatId: null, chatMessages: {}, chatDraft: {},
+        notifyPermission: typeof Notification !== 'undefined' ? Notification.permission : 'unsupported',
+        openChatId: null, chatMessages: {}, chatDraft: {}, chatPollTimer: null,
         newContact: { channel: 'email', contact_value: '' },
         editingContactId: null, editContactValue: '',
         passwordForm: { current: '', password: '', confirm: '' },
@@ -273,6 +279,9 @@ function profilePage() {
             if (a.ok) this.myAlerts = a.data.data.alerts;
             await this.loadNotifications();
             await this.loadPushSubscriptions();
+            if (typeof window.nexalertNotificationPermission === 'function') {
+                this.notifyPermission = window.nexalertNotificationPermission();
+            }
             const params = new URLSearchParams(location.search);
             const ackId = params.get('ack_alert');
             if (ackId) this.ackAlert({ id: parseInt(ackId, 10) });
@@ -296,6 +305,14 @@ function profilePage() {
                 this.pushSubscriptions = res.data.data.subscriptions || [];
                 this.pushConfigured = !!res.data.data.configured;
             }
+        },
+        async enableBrowserNotify() {
+            if (typeof window.nexalertRequestNotificationPermission === 'function') {
+                const ok = await window.nexalertRequestNotificationPermission();
+                this.notifyPermission = window.nexalertNotificationPermission();
+                return ok;
+            }
+            toast('Notifications not available', 'error');
         },
         async enablePush() {
             if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
@@ -335,17 +352,33 @@ function profilePage() {
             if (res.ok) await this.loadPushSubscriptions();
         },
         async toggleChat(a) {
+            if (this.chatPollTimer) {
+                clearInterval(this.chatPollTimer);
+                this.chatPollTimer = null;
+            }
             if (this.openChatId === a.id) {
                 this.openChatId = null;
                 return;
             }
             this.openChatId = a.id;
             await this.loadChat(a.id);
+            this.chatPollTimer = setInterval(() => this.loadChat(a.id, true), 5000);
         },
-        async loadChat(alertId) {
-            const res = await api.get('/alerts/' + alertId + '/chat/messages');
-            if (res.ok) {
-                this.chatMessages[alertId] = res.data.data.messages || [];
+        async loadChat(alertId, appendOnly = false) {
+            let url = '/alerts/' + alertId + '/chat/messages';
+            if (appendOnly && (this.chatMessages[alertId] || []).length) {
+                const last = this.chatMessages[alertId][this.chatMessages[alertId].length - 1];
+                if (last?.created_at) url += '?since=' + encodeURIComponent(last.created_at);
+            }
+            const res = await api.get(url);
+            if (!res.ok) return;
+            const incoming = res.data.data.messages || [];
+            if (appendOnly && incoming.length) {
+                const existing = this.chatMessages[alertId] || [];
+                const ids = new Set(existing.map(m => m.id));
+                this.chatMessages[alertId] = existing.concat(incoming.filter(m => !ids.has(m.id)));
+            } else if (!appendOnly) {
+                this.chatMessages[alertId] = incoming;
             }
         },
         async sendChat(a) {

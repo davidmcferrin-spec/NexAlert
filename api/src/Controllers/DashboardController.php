@@ -12,6 +12,7 @@ namespace NexAlert\Controllers;
 use NexAlert\Api\Request;
 use NexAlert\Api\Response;
 use NexAlert\Config\Database;
+use NexAlert\Services\NotificationService;
 
 class DashboardController
 {
@@ -60,12 +61,12 @@ class DashboardController
             );
         }
 
-        Response::success([
+        Response::success(array_merge([
             'orgs'         => $orgs,
             'users'        => $users,
             'alerts_sent'  => $alertsSent,
             'tokens'       => $tokens,
             'pending_jobs' => $pendingJobs,
-        ]);
+        ], NotificationService::pushStats($db, $isSuperAdmin, $orgId)));
     }
 }

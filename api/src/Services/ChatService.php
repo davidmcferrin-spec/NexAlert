@@ -65,21 +65,34 @@ class ChatService
     /**
      * @return array{messages: list<array<string, mixed>>, thread: array<string, mixed>}
      */
-    public static function listMessages(Database $db, int $alertId, int $userId, int $limit = 100): array
-    {
+    public static function listMessages(
+        Database $db,
+        int $alertId,
+        int $userId,
+        int $limit = 100,
+        ?string $since = null
+    ): array {
         $ctx = self::getThreadContext($db, $alertId, $userId);
         $threadId = (int) $ctx['thread']['id'];
         $limit = min(max($limit, 1), 200);
+
+        $params = [$threadId];
+        $sinceSql = '';
+        if ($since !== null && trim($since) !== '') {
+            $sinceSql = ' AND cm.created_at > ?';
+            $params[] = NotificationService::normalizeSincePublic(trim($since));
+        }
+        $params[] = $limit;
 
         $rows = $db->fetchAll(
             'SELECT cm.id, cm.user_id, cm.source_channel, cm.body, cm.created_at,
                     u.display_name AS user_name, u.username
              FROM chat_messages cm
              JOIN users u ON u.id = cm.user_id
-             WHERE cm.thread_id = ? AND cm.is_deleted = 0
+             WHERE cm.thread_id = ? AND cm.is_deleted = 0' . $sinceSql . '
              ORDER BY cm.created_at ASC
              LIMIT ?',
-            [$threadId, $limit]
+            $params
         );
 
         $filtered = self::filterVisibleMessages(
@@ -143,26 +156,44 @@ class ChatService
 
         $sourceChannel = in_array($channel, ['web', 'sms', 'app'], true) ? $channel : 'web';
 
-        $db->execute(
-            'INSERT INTO chat_messages (thread_id, user_id, source_channel, body, twilio_message_sid)
-             VALUES (?, ?, ?, ?, ?)',
-            [$threadId, $userId, $sourceChannel, $body, $twilioSid]
-        );
-        $messageId = $db->lastInsertId();
-
-        AuditService::log('chat.message_sent', 'alert', (string) $alertId, [
-            'thread_id'      => $threadId,
-            'source_channel' => $sourceChannel,
-        ], $userId);
+        self::insertMessage($db, $threadId, $alertId, $userId, $sourceChannel, $body, $twilioSid, $ctx);
 
         return $db->fetchOne(
             'SELECT cm.id, cm.user_id, cm.source_channel, cm.body, cm.created_at,
                     u.display_name AS user_name, u.username
              FROM chat_messages cm
              JOIN users u ON u.id = cm.user_id
-             WHERE cm.id = ?',
-            [$messageId]
-        ) ?: ['id' => $messageId];
+             WHERE cm.thread_id = ?
+             ORDER BY cm.id DESC LIMIT 1',
+            [$threadId]
+        ) ?: ['id' => 0];
+    }
+
+    /**
+     * @param array<string, mixed> $ctx
+     */
+    private static function insertMessage(
+        Database $db,
+        int $threadId,
+        int $alertId,
+        int $userId,
+        string $sourceChannel,
+        string $body,
+        ?string $twilioSid,
+        array $ctx
+    ): void {
+        $db->execute(
+            'INSERT INTO chat_messages (thread_id, user_id, source_channel, body, twilio_message_sid)
+             VALUES (?, ?, ?, ?, ?)',
+            [$threadId, $userId, $sourceChannel, $body, $twilioSid]
+        );
+
+        AuditService::log('chat.message_sent', 'alert', (string) $alertId, [
+            'thread_id'      => $threadId,
+            'source_channel' => $sourceChannel,
+        ], $userId);
+
+        NotificationService::notifyChatParticipants($db, $alertId, $userId, $body, $ctx);
     }
 
     public static function closeThread(Database $db, int $alertId, int $userId): void
@@ -193,7 +224,7 @@ class ChatService
 
         $row = $db->fetchOne(
             'SELECT ct.id AS thread_id, ct.alert_id, ct.is_open, a.alert_type, a.status,
-                    a.expires_at, a.created_by_user
+                    a.expires_at, a.created_by_user, a.subject
              FROM chat_threads ct
              JOIN alerts a ON a.id = ct.alert_id
              JOIN alert_deliveries ad ON ad.alert_id = a.id AND ad.user_id = ?
@@ -227,16 +258,24 @@ class ChatService
             }
         }
 
-        $db->execute(
-            'INSERT INTO chat_messages (thread_id, user_id, source_channel, body, twilio_message_sid)
-             VALUES (?, ?, \'sms\', ?, ?)',
-            [$threadId, $userId, $body, $twilioSid]
-        );
+        $ctx = [
+            'alert'         => [
+                'id'              => $alertId,
+                'subject'         => $row['subject'] ?? '',
+                'alert_type'      => $row['alert_type'],
+                'status'          => $row['status'],
+                'expires_at'      => $row['expires_at'],
+                'created_by_user' => $row['created_by_user'],
+            ],
+            'thread'        => [
+                'id'          => $threadId,
+                'thread_type' => $row['alert_type'],
+                'is_open'     => 1,
+            ],
+            'originator_id' => (int) ($row['created_by_user'] ?? 0),
+        ];
 
-        AuditService::log('chat.message_sent', 'alert', (string) $alertId, [
-            'thread_id'      => $threadId,
-            'source_channel' => 'sms',
-        ], $userId);
+        self::insertMessage($db, $threadId, $alertId, $userId, 'sms', $body, $twilioSid, $ctx);
 
         return true;
     }

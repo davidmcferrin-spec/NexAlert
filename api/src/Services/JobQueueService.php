@@ -98,4 +98,19 @@ class JobQueueService
 
         return $db->lastInsertId();
     }
+
+    /**
+     * Immediate Web Push notification to all active subscriptions for a user.
+     *
+     * @param array<string, mixed> $payload
+     */
+    public static function pushPushNotify(int $userId, string $title, string $body, string $url, array $payload = []): int
+    {
+        return self::push('push_notify', array_merge([
+            'user_id' => $userId,
+            'title'   => $title,
+            'body'    => $body,
+            'url'     => $url,
+        ], $payload));
+    }
 }

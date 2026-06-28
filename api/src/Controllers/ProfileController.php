@@ -26,6 +26,7 @@ use NexAlert\Config\Database;
 use NexAlert\Config\Env;
 use NexAlert\Services\AuditService;
 use NexAlert\Services\MailService;
+use NexAlert\Services\NotificationService;
 use NexAlert\Services\PollService;
 use NexAlert\Services\RowNormalizer;
 use NexAlert\Services\SmsConsentService;
@@ -440,6 +441,17 @@ class ProfileController
         WebPushService::unsubscribe($db, $userId, $subId);
 
         Response::success(null, 'Push subscription removed');
+    }
+
+    public static function updates(Request $request): never
+    {
+        $db     = Database::getInstance();
+        $userId = (int) $request->user['uid'];
+        $since  = trim((string) $request->query('since', ''));
+
+        $data = NotificationService::getUpdates($db, $userId, $since);
+
+        Response::success($data);
     }
 
     public static function changePassword(Request $request): never

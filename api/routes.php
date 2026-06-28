@@ -194,6 +194,7 @@ return function (Router $router): void {
         $r->get('/push/subscriptions',  [ProfileController::class, 'listPushSubscriptions'], [AuthMiddleware::required()]);
         $r->post('/push/subscribe',     [ProfileController::class, 'subscribePush'],      [AuthMiddleware::required()]);
         $r->delete('/push/subscriptions/{id:\d+}', [ProfileController::class, 'unsubscribePush'], [AuthMiddleware::required()]);
+        $r->get('/updates',              [ProfileController::class, 'updates'],              [AuthMiddleware::required()]);
         $r->post('/change-password',    [ProfileController::class, 'changePassword'],       [AuthMiddleware::required()]);
     });
 
