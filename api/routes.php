@@ -111,13 +111,13 @@ return function (Router $router): void {
     // Tags
     // -----------------------------------------------------------------------
     $router->group('/api/v1/tags', function (Router $r): void {
-        $r->get('/',              [TagController::class, 'list'],   [AuthMiddleware::withPermission('tag.view')]);
+        $r->get('/',              [TagController::class, 'list'],   [AuthMiddleware::required()]);
         $r->post('/',             [TagController::class, 'create'], [AuthMiddleware::withPermission('tag.manage')]);
-        $r->get('/{id:\d+}',     [TagController::class, 'get'],    [AuthMiddleware::withPermission('tag.view')]);
+        $r->get('/{id:\d+}',     [TagController::class, 'get'],    [AuthMiddleware::required()]);
         $r->put('/{id:\d+}',     [TagController::class, 'update'], [AuthMiddleware::withPermission('tag.manage')]);
         $r->delete('/{id:\d+}',  [TagController::class, 'delete'], [AuthMiddleware::withPermission('tag.manage')]);
 
-        $r->get('/{id:\d+}/requests',                        [TagController::class, 'listRequests'],    [AuthMiddleware::withPermission('tag.view')]);
+        $r->get('/{id:\d+}/requests',                        [TagController::class, 'listRequests'],    [AuthMiddleware::required()]);
         $r->post('/{id:\d+}/requests/{rid:\d+}/approve',    [TagController::class, 'approveRequest'],  [AuthMiddleware::required()]);
         $r->post('/{id:\d+}/requests/{rid:\d+}/deny',       [TagController::class, 'denyRequest'],     [AuthMiddleware::required()]);
     });

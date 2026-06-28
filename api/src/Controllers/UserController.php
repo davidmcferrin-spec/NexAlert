@@ -499,6 +499,8 @@ class UserController
             [$id]
         );
 
+        $memberships = self::enrichMembershipsWithPaths($db, $memberships);
+
         Response::success(['memberships' => $memberships]);
     }
 
@@ -691,6 +693,97 @@ class UserController
     // -----------------------------------------------------------------------
     // Internal helpers
     // -----------------------------------------------------------------------
+
+    /**
+     * Add breadcrumb labels for each membership using the node's materialized path.
+     *
+     * @param array<int, array<string, mixed>> $memberships
+     * @return array<int, array<string, mixed>>
+     */
+    private static function enrichMembershipsWithPaths(Database $db, array $memberships): array
+    {
+        if ($memberships === []) {
+            return $memberships;
+        }
+
+        $allNodeIds = [];
+        foreach ($memberships as $membership) {
+            foreach (self::pathNodeIds($membership) as $nodeId) {
+                $allNodeIds[$nodeId] = true;
+            }
+        }
+
+        $nodeMap = [];
+        if ($allNodeIds !== []) {
+            $ids = array_keys($allNodeIds);
+            [$placeholders, $params] = $db->inClause($ids);
+            $rows = $db->fetchAll(
+                "SELECT id, name, node_type FROM org_nodes WHERE id IN ({$placeholders})",
+                $params
+            );
+            foreach ($rows as $row) {
+                $nodeMap[(int) $row['id']] = $row;
+            }
+        }
+
+        foreach ($memberships as &$membership) {
+            $pathNodes = [];
+            foreach (self::pathNodeIds($membership) as $nodeId) {
+                if (!isset($nodeMap[$nodeId])) {
+                    continue;
+                }
+                $pathNodes[] = [
+                    'id'        => $nodeId,
+                    'name'      => $nodeMap[$nodeId]['name'],
+                    'node_type' => $nodeMap[$nodeId]['node_type'],
+                ];
+            }
+
+            $membership['path_nodes'] = $pathNodes;
+            $membership['breadcrumb'] = self::membershipBreadcrumb($membership, $pathNodes);
+        }
+        unset($membership);
+
+        return $memberships;
+    }
+
+    /**
+     * @param array<string, mixed> $membership
+     * @return int[]
+     */
+    private static function pathNodeIds(array $membership): array
+    {
+        $orgId   = (int) $membership['org_id'];
+        $segments = array_values(array_filter(explode('/', (string) ($membership['path'] ?? ''))));
+        $nodeIds  = [];
+
+        foreach ($segments as $segment) {
+            $id = (int) $segment;
+            if ($id <= 0 || $id === $orgId) {
+                continue;
+            }
+            $nodeIds[] = $id;
+        }
+
+        if ($nodeIds === []) {
+            $nodeIds[] = (int) $membership['org_node_id'];
+        }
+
+        return $nodeIds;
+    }
+
+    /**
+     * @param array<int, array{id: int, name: string, node_type: string}> $pathNodes
+     */
+    private static function membershipBreadcrumb(array $membership, array $pathNodes): string
+    {
+        $parts = [(string) $membership['org_name']];
+        foreach ($pathNodes as $node) {
+            $parts[] = (string) $node['name'];
+        }
+
+        return implode(' → ', $parts);
+    }
 
     private static function fetchUserDetail(Database $db, int $id): ?array
     {

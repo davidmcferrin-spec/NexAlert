@@ -219,13 +219,14 @@ if ($isEdit) {
 
         <div class="divide-y divide-gray-100 dark:divide-gray-800">
             <template x-for="m in activeMemberships" :key="m.id">
-                <div class="flex items-center justify-between px-5 py-3">
-                    <div>
-                        <div class="text-sm font-medium text-gray-900 dark:text-white" x-text="m.org_name + ' → ' + m.node_name"></div>
-                        <div class="text-xs text-gray-400" x-text="m.position_title || m.node_type"></div>
+                <div class="flex items-center justify-between px-5 py-3 gap-4">
+                    <div class="min-w-0">
+                        <div class="text-sm font-medium text-gray-900 dark:text-white break-words"
+                             x-text="membershipLabel(m)"></div>
+                        <div class="text-xs text-gray-400 mt-0.5" x-text="membershipMeta(m)"></div>
                     </div>
                     <button @click="remove(m)"
-                            class="text-xs text-red-400 hover:text-red-600 transition-colors">Remove</button>
+                            class="text-xs text-red-400 hover:text-red-600 transition-colors flex-shrink-0">Remove</button>
                 </div>
             </template>
             <div x-show="activeMemberships.length === 0" class="px-5 py-4 text-sm text-gray-400">No org node memberships.</div>
@@ -316,6 +317,20 @@ function membershipsPanel(userId) {
             return this.memberships.filter(m => m.is_active == 1);
         },
 
+        membershipLabel(m) {
+            if (m.breadcrumb) return m.breadcrumb;
+            if (m.path_nodes?.length) {
+                return [m.org_name, ...m.path_nodes.map(n => n.name)].join(' → ');
+            }
+            return `${m.org_name} → ${m.node_name}`;
+        },
+
+        membershipMeta(m) {
+            const parts = [m.node_type];
+            if (m.position_title) parts.push(m.position_title);
+            return parts.join(' · ');
+        },
+
         async load() {
             const res = await api.get(`/users/${userId}/memberships`);
             if (res.ok) this.memberships = res.data.data.memberships;
@@ -355,7 +370,7 @@ function membershipsPanel(userId) {
         },
 
         async remove(m) {
-            if (!confirm(`Remove membership in ${m.node_name}?`)) return;
+            if (!confirm(`Remove membership at ${this.membershipLabel(m)}?`)) return;
             const res = await api.delete(`/users/${userId}/memberships/${m.id}`);
             if (res.ok) { toast('Membership removed'); await this.load(); }
             else toast(res.data.error || 'Failed', 'error');

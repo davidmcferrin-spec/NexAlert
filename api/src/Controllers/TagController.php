@@ -41,8 +41,9 @@ class TagController
         $params = [];
 
         if (!$isSuperAdmin) {
-            $where[]  = '(t.owner_org_id IS NULL OR t.owner_org_id = ?)';
+            $where[]  = '(t.owner_org_id IS NULL OR t.owner_org_id = ? OR t.created_by = ?)';
             $params[] = $request->user['org'];
+            $params[] = $request->user['uid'];
         } elseif ($orgId !== null) {
             $where[]  = '(t.owner_org_id IS NULL OR t.owner_org_id = ?)';
             $params[] = $orgId;
@@ -81,14 +82,13 @@ class TagController
                     t.is_exclusive, t.tag_admin_id, t.allow_self_request, t.requires_approval,
                     t.is_active, t.is_system, t.created_at, t.updated_at,
                     o.display_name AS owner_org_name,
-                    COUNT(DISTINCT ta.user_id) AS assignment_count,
-                    COUNT(DISTINCT tar.id) AS pending_request_count
+                    (SELECT COUNT(*) FROM tag_assignments ta
+                     WHERE ta.tag_id = t.id AND ta.is_active = 1) AS assignment_count,
+                    (SELECT COUNT(*) FROM tag_approval_requests tar
+                     WHERE tar.tag_id = t.id AND tar.status = 'pending') AS pending_request_count
              FROM tags t
              LEFT JOIN organizations o ON o.id = t.owner_org_id
-             LEFT JOIN tag_assignments ta ON ta.tag_id = t.id AND ta.is_active = 1
-             LEFT JOIN tag_approval_requests tar ON tar.tag_id = t.id AND tar.status = 'pending'
              WHERE {$whereStr}
-             GROUP BY t.id
              ORDER BY t.is_system DESC, t.name ASC
              LIMIT ? OFFSET ?",
             array_merge($params, [$limit, $offset])
@@ -139,8 +139,45 @@ class TagController
 
         $db = Database::getInstance();
 
-        if ($db->fetchValue('SELECT id FROM tags WHERE slug = ?', [$slug])) {
-            Response::validationError(['slug' => 'Slug already in use']);
+        $existing = $db->fetchOne(
+            'SELECT id, name, is_active, is_system FROM tags WHERE slug = ?',
+            [$slug]
+        );
+
+        if ($existing) {
+            if ((int) $existing['is_system'] === 1) {
+                Response::validationError([
+                    'slug' => 'Slug already used by system tag "' . $existing['name']
+                        . '" (auto-created from the org tree). Filter by System on the Tags page, or choose a different slug.',
+                ]);
+            }
+
+            if ((int) $existing['is_active'] === 0) {
+                $db->execute(
+                    'UPDATE tags SET name = ?, description = ?, owner_org_id = ?, is_exclusive = ?,
+                                     tag_admin_id = ?, allow_self_request = ?, requires_approval = ?,
+                                     is_active = 1
+                     WHERE id = ?',
+                    [
+                        $name, $description, $ownerOrgId,
+                        $isExclusive ? 1 : 0, $tagAdminId,
+                        $allowSelfRequest ? 1 : 0, $requiresApproval ? 1 : 0,
+                        $existing['id'],
+                    ]
+                );
+
+                AuditService::log('tag.reactivated', 'tag', (string) $existing['id'], [
+                    'name' => $name,
+                    'slug' => $slug,
+                ], $request->user['uid']);
+
+                Response::success(self::fetchTagDetail($db, (int) $existing['id']), 'Tag reactivated', 200);
+            }
+
+            Response::validationError([
+                'slug' => 'Slug already used by active tag "' . $existing['name']
+                    . '". Edit that tag instead of creating a duplicate.',
+            ]);
         }
 
         $id = $db->transaction(function (Database $db) use (
@@ -404,15 +441,21 @@ class TagController
             return;
         }
 
-        $tag = $db->fetchOne('SELECT owner_org_id FROM tags WHERE id = ?', [$tagId]);
+        $tag = $db->fetchOne('SELECT owner_org_id, created_by FROM tags WHERE id = ?', [$tagId]);
         if (!$tag) {
             Response::notFound('Tag not found');
         }
 
-        $ownerOrgId = $tag['owner_org_id'] !== null ? (int) $tag['owner_org_id'] : null;
-        if ($ownerOrgId !== null && $ownerOrgId !== (int) $request->user['org']) {
-            Response::forbidden('Access denied to this tag');
+        if ((int) ($tag['created_by'] ?? 0) === (int) $request->user['uid']) {
+            return;
         }
+
+        $ownerOrgId = $tag['owner_org_id'] !== null ? (int) $tag['owner_org_id'] : null;
+        if ($ownerOrgId === null || $ownerOrgId === (int) $request->user['org']) {
+            return;
+        }
+
+        Response::forbidden('Access denied to this tag');
     }
 
     private static function assertOrgAccess(Request $request, int $orgId): void
