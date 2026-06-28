@@ -93,21 +93,35 @@ $headerActions = '
 
     <!-- Org tree panel (shown when org is selected) -->
     <div x-show="selectedOrg" x-cloak class="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 overflow-hidden">
-        <div class="flex items-center justify-between px-5 py-4 border-b border-gray-100 dark:border-gray-800">
+        <div class="flex items-center justify-between px-5 py-4 border-b border-gray-100 dark:border-gray-800 gap-3 flex-wrap">
             <h2 class="text-sm font-semibold text-gray-900 dark:text-white">
                 <span x-text="selectedOrg?.display_name"></span>
                 <span class="text-gray-400 font-normal ml-1">— Org Tree</span>
             </h2>
-            <button @click="openAddNode()"
-                    :disabled="nodesLoading || !selectedOrg"
-                    class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold
-                           bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed
-                           text-white rounded-lg transition-colors">
-                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
-                </svg>
-                Add Node
-            </button>
+            <div class="flex items-center gap-2 flex-wrap">
+                <button type="button" @click="expandAll()" x-show="nodes.length > 0"
+                        class="px-2.5 py-1.5 text-xs font-medium text-gray-500 hover:text-gray-800
+                               dark:text-gray-400 dark:hover:text-gray-200 rounded-lg
+                               border border-gray-200 dark:border-gray-700 transition-colors">
+                    Expand all
+                </button>
+                <button type="button" @click="collapseAll()" x-show="nodes.length > 0"
+                        class="px-2.5 py-1.5 text-xs font-medium text-gray-500 hover:text-gray-800
+                               dark:text-gray-400 dark:hover:text-gray-200 rounded-lg
+                               border border-gray-200 dark:border-gray-700 transition-colors">
+                    Collapse all
+                </button>
+                <button @click="openAddNode()"
+                        :disabled="nodesLoading || !selectedOrg"
+                        class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold
+                               bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed
+                               text-white rounded-lg transition-colors">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
+                    </svg>
+                    Add Node
+                </button>
+            </div>
         </div>
 
         <!-- Tree -->
@@ -119,24 +133,39 @@ $headerActions = '
             <template x-if="!nodesLoading && nodes.length > 0">
                 <div>
                     <template x-for="node in nodes" :key="node.id">
-                        <div class="flex items-center gap-2 py-1.5 group"
+                        <div x-show="isNodeVisible(node)"
+                             class="flex items-center gap-1.5 py-1.5 group rounded-lg transition-colors"
+                             :class="editingNode?.id === node.id ? 'bg-red-50 dark:bg-red-950/20' : 'hover:bg-gray-50 dark:hover:bg-gray-800/40'"
                              :style="{ paddingLeft: (node.depth * 20 + 4) + 'px' }">
-                            <!-- Tree line indicator -->
-                            <svg class="w-4 h-4 text-gray-300 dark:text-gray-700 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2"/>
-                            </svg>
+                            <!-- Expand / collapse -->
+                            <button type="button" @click.stop="toggleCollapse(node.id)"
+                                    x-show="hasChildren(node.id)"
+                                    class="w-5 h-5 flex-shrink-0 flex items-center justify-center rounded
+                                           text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
+                                    :aria-expanded="!collapsed[node.id]">
+                                <svg class="w-3.5 h-3.5 transition-transform duration-150"
+                                     :class="collapsed[node.id] ? '' : 'rotate-90'"
+                                     fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/>
+                                </svg>
+                            </button>
+                            <span class="w-5 flex-shrink-0" x-show="!hasChildren(node.id)"></span>
                             <!-- Node type badge -->
                             <span class="text-xs px-1.5 py-0.5 rounded font-mono uppercase
                                          bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 flex-shrink-0"
                                   x-text="formatNodeType(node.node_type)"></span>
                             <!-- Name -->
-                            <span class="text-sm text-gray-800 dark:text-gray-200 font-medium" x-text="node.name"></span>
+                            <span class="text-sm text-gray-800 dark:text-gray-200 font-medium truncate" x-text="node.name"></span>
                             <!-- Member count -->
-                            <span class="text-xs text-gray-400" x-show="node.member_count > 0">
+                            <span class="text-xs text-gray-400 flex-shrink-0" x-show="node.member_count > 0">
                                 (<span x-text="node.member_count"></span>)
                             </span>
                             <!-- Actions (show on hover) -->
-                            <div class="ml-auto flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <div class="ml-auto flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+                                <button @click="openEditNode(node)"
+                                        class="text-xs text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-colors">
+                                    Edit
+                                </button>
                                 <button @click="addChildNode(node)"
                                         class="text-xs text-gray-400 hover:text-red-600 dark:hover:text-red-400 transition-colors">
                                     + Child
@@ -152,52 +181,127 @@ $headerActions = '
                 </div>
             </template>
         </div>
+    </div>
 
-        <!-- Add node form (inline) -->
-        <div x-show="showAddNode" x-cloak
-             class="border-t border-gray-100 dark:border-gray-800 p-5 bg-gray-50 dark:bg-gray-800/40">
-            <h3 class="text-sm font-semibold text-gray-700 dark:text-gray-300 mb-4">
-                Add Node
-                <span x-show="newNode.parentName" class="font-normal text-gray-400">
-                    under <span x-text="newNode.parentName" class="text-gray-600 dark:text-gray-300"></span>
-                </span>
-            </h3>
-            <div class="grid grid-cols-2 gap-4 mb-4">
+    <!-- Add / Edit node modal -->
+    <div x-show="nodeModal" x-cloak
+         class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
+         @keydown.escape.window="closeNodeModal()">
+        <div class="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700
+                    shadow-xl max-w-lg w-full max-h-[90vh] overflow-y-auto"
+             @click.outside="closeNodeModal()">
+
+            <!-- Add -->
+            <template x-if="nodeModal === 'add'">
                 <div>
-                    <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Name</label>
-                    <input type="text" x-model="newNode.name" placeholder="e.g. Engineering"
-                           class="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-gray-700
-                                  bg-white dark:bg-gray-800 text-gray-900 dark:text-white
-                                  focus:outline-none focus:ring-2 focus:ring-red-500">
+                    <div class="flex items-center justify-between px-6 py-4 border-b border-gray-100 dark:border-gray-800">
+                        <h3 class="text-base font-semibold text-gray-900 dark:text-white">
+                            Add Node
+                            <span x-show="newNode.parentName" class="font-normal text-sm text-gray-400 block sm:inline sm:ml-1">
+                                under <span x-text="newNode.parentName" class="text-gray-600 dark:text-gray-300"></span>
+                            </span>
+                        </h3>
+                        <button type="button" @click="closeNodeModal()" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                            </svg>
+                        </button>
+                    </div>
+                    <div class="p-6 space-y-4">
+                        <div>
+                            <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Name</label>
+                            <input type="text" x-model="newNode.name" placeholder="e.g. Engineering" x-ref="nodeModalName"
+                                   class="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-gray-700
+                                          bg-white dark:bg-gray-800 text-gray-900 dark:text-white
+                                          focus:outline-none focus:ring-2 focus:ring-red-500">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Type</label>
+                            <select x-model="newNode.node_type"
+                                    class="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-gray-700
+                                           bg-white dark:bg-gray-800 text-gray-900 dark:text-white
+                                           focus:outline-none focus:ring-2 focus:ring-red-500">
+                                <template x-for="opt in nodeTypesForParent()" :key="opt.value">
+                                    <option :value="opt.value" x-text="opt.label"></option>
+                                </template>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="flex justify-end gap-3 px-6 py-4 border-t border-gray-100 dark:border-gray-800">
+                        <button type="button" @click="closeNodeModal()"
+                                class="px-4 py-2 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900">Cancel</button>
+                        <button type="button" @click="saveNode()" :disabled="!newNode.name"
+                                class="px-4 py-2 text-sm font-semibold bg-red-600 hover:bg-red-700 disabled:opacity-50
+                                       text-white rounded-xl">Add Node</button>
+                    </div>
                 </div>
+            </template>
+
+            <!-- Edit -->
+            <template x-if="nodeModal === 'edit'">
                 <div>
-                    <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Type</label>
-                    <select x-model="newNode.node_type"
-                            class="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-gray-700
-                                   bg-white dark:bg-gray-800 text-gray-900 dark:text-white
-                                   focus:outline-none focus:ring-2 focus:ring-red-500">
-                        <template x-for="opt in nodeTypesForParent()" :key="opt.value">
-                            <option :value="opt.value" x-text="opt.label"></option>
-                        </template>
-                    </select>
-                    <p class="text-xs text-gray-400 mt-1" x-show="!newNode.parent_id">
-                        Select an org in the tree first, or use + Child on a node.
-                    </p>
+                    <div class="flex items-center justify-between px-6 py-4 border-b border-gray-100 dark:border-gray-800">
+                        <h3 class="text-base font-semibold text-gray-900 dark:text-white">
+                            Edit Node
+                            <span class="font-normal text-sm text-gray-400 block sm:inline sm:ml-1" x-text="editingNode?.name"></span>
+                        </h3>
+                        <button type="button" @click="closeNodeModal()" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                            </svg>
+                        </button>
+                    </div>
+                    <div class="p-6 space-y-4">
+                        <div>
+                            <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Name</label>
+                            <input type="text" x-model="editForm.name" x-ref="nodeModalName"
+                                   class="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-gray-700
+                                          bg-white dark:bg-gray-800 text-gray-900 dark:text-white
+                                          focus:outline-none focus:ring-2 focus:ring-red-500">
+                        </div>
+                        <div>
+                            <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Type</label>
+                            <select x-model="editForm.node_type"
+                                    :disabled="editingNode?.node_type === 'org'"
+                                    class="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-gray-700
+                                           bg-white dark:bg-gray-800 text-gray-900 dark:text-white
+                                           focus:outline-none focus:ring-2 focus:ring-red-500 disabled:opacity-60">
+                                <template x-for="opt in nodeTypesForEdit()" :key="opt.value">
+                                    <option :value="opt.value" x-text="opt.label"></option>
+                                </template>
+                            </select>
+                        </div>
+                        <div x-show="editForm.node_type !== 'org'">
+                            <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Parent node</label>
+                            <select x-model="editForm.parent_id"
+                                    class="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-gray-700
+                                           bg-white dark:bg-gray-800 text-gray-900 dark:text-white
+                                           focus:outline-none focus:ring-2 focus:ring-red-500">
+                                <template x-for="p in validMoveParents()" :key="p.id">
+                                    <option :value="p.id" x-text="p.label"></option>
+                                </template>
+                            </select>
+                            <p class="text-xs text-gray-400 mt-1">Move this node under a different parent in the tree.</p>
+                        </div>
+                        <div>
+                            <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Slug</label>
+                            <div class="px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-gray-700
+                                        bg-gray-100 dark:bg-gray-800/80 text-gray-500 font-mono"
+                                 x-text="editingNode?.slug || '—'"></div>
+                            <p class="text-xs text-gray-400 mt-1">Set at creation (used for CSV import).</p>
+                        </div>
+                    </div>
+                    <div class="flex justify-end gap-3 px-6 py-4 border-t border-gray-100 dark:border-gray-800">
+                        <button type="button" @click="closeNodeModal()"
+                                class="px-4 py-2 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900">Cancel</button>
+                        <button type="button" @click="saveEditNode()" :disabled="!editForm.name || editSaving"
+                                class="px-4 py-2 text-sm font-semibold bg-red-600 hover:bg-red-700 disabled:opacity-50
+                                       text-white rounded-xl">
+                            <span x-text="editSaving ? 'Saving…' : 'Save Changes'"></span>
+                        </button>
+                    </div>
                 </div>
-            </div>
-            <div class="flex gap-2">
-                <button @click="saveNode()"
-                        :disabled="!newNode.name"
-                        class="px-4 py-2 text-sm font-semibold bg-red-600 hover:bg-red-700
-                               disabled:opacity-50 disabled:cursor-not-allowed
-                               text-white rounded-lg transition-colors">
-                    Add Node
-                </button>
-                <button @click="cancelAddNode()"
-                        class="px-4 py-2 text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 transition-colors">
-                    Cancel
-                </button>
-            </div>
+            </template>
         </div>
     </div>
 
@@ -207,7 +311,11 @@ $headerActions = '
 function orgsPage() {
     return {
         orgs: [], nodes: [], loading: true, nodesLoading: false,
-        search: '', filterActive: '1', selectedOrg: null, showAddNode: false,
+        search: '', filterActive: '1', selectedOrg: null,
+        nodeModal: null,
+        collapsed: {},
+        editingNode: null, editForm: { name: '', node_type: '', parent_id: null }, originalParentId: null,
+        editSaving: false,
         newNode: { name: '', node_type: 'region', parent_id: null, parentName: '', parent_type: null },
 
         formatNodeType(type) {
@@ -226,6 +334,118 @@ function orgsPage() {
 
         nodeTypesForParent() {
             return this.typesForParentType(this.newNode.parent_type);
+        },
+
+        nodeTypesForEdit() {
+            if (this.editingNode?.node_type === 'org') {
+                return [{ value: 'org', label: 'Organization (root)' }];
+            }
+            const parent = this.nodeById(this.editForm.parent_id) || this.orgRootNode();
+            const opts = this.typesForParentType(parent?.node_type || 'org');
+            if (opts.length && !opts.find(o => o.value === this.editForm.node_type)) {
+                opts.unshift({
+                    value: this.editForm.node_type,
+                    label: this.formatNodeType(this.editForm.node_type) + ' (current)',
+                });
+            }
+            return opts.length ? opts : [{
+                value: this.editForm.node_type,
+                label: this.formatNodeType(this.editForm.node_type),
+            }];
+        },
+
+        nodeById(id) {
+            return this.nodes.find(n => Number(n.id) === Number(id)) || null;
+        },
+
+        hasChildren(id) {
+            return this.nodes.some(n => Number(n.parent_id) === Number(id));
+        },
+
+        isNodeVisible(node) {
+            let pid = node.parent_id;
+            while (pid != null && pid !== '') {
+                if (this.collapsed[pid]) return false;
+                const parent = this.nodeById(pid);
+                pid = parent?.parent_id ?? null;
+            }
+            return true;
+        },
+
+        toggleCollapse(id) {
+            if (this.collapsed[id]) {
+                const next = { ...this.collapsed };
+                delete next[id];
+                this.collapsed = next;
+            } else {
+                this.collapsed = { ...this.collapsed, [id]: true };
+            }
+        },
+
+        expandAll() {
+            this.collapsed = {};
+        },
+
+        collapseAll() {
+            const next = {};
+            this.nodes.forEach(n => {
+                if (this.hasChildren(n.id)) next[n.id] = true;
+            });
+            this.collapsed = next;
+        },
+
+        closeNodeModal() {
+            this.nodeModal = null;
+            this.editingNode = null;
+            this.editForm = { name: '', node_type: '', parent_id: null };
+            this.originalParentId = null;
+            this.editSaving = false;
+            this.newNode = { name: '', node_type: 'region', parent_id: null, parentName: '', parent_type: null };
+        },
+
+        focusNodeModalInput() {
+            this.$nextTick(() => {
+                this.$nextTick(() => this.$refs.nodeModalName?.focus());
+            });
+        },
+
+        isDescendantOf(candidate, node) {
+            if (!node?.path || !candidate?.path) return false;
+            return Number(candidate.id) !== Number(node.id) && String(candidate.path).startsWith(String(node.path));
+        },
+
+        validMoveParents() {
+            if (!this.editingNode || this.editForm.node_type === 'org') return [];
+            const nodeType = this.editForm.node_type || this.editingNode.node_type;
+            return this.nodes
+                .filter(n => {
+                    if (Number(n.id) === Number(this.editingNode.id)) return false;
+                    if (this.isDescendantOf(n, this.editingNode)) return false;
+                    if (Number(n.is_active) === 0) return false;
+                    return this.isValidParentForNodeType(n, nodeType);
+                })
+                .map(n => ({
+                    id: n.id,
+                    label: `${n.name} (${this.formatNodeType(n.node_type)})`,
+                }));
+        },
+
+        isValidParentForNodeType(parentNode, nodeType) {
+            const pt = parentNode.node_type;
+            const rules = {
+                global_business_unit: ['org'],
+                business_unit: ['market'],
+                site: ['global_business_unit', 'region', 'market', 'business_unit'],
+                department: ['site', 'global_business_unit', 'business_unit'],
+                team: ['department', 'site', 'global_business_unit', 'business_unit'],
+            };
+            if (rules[nodeType]) {
+                return rules[nodeType].includes(pt);
+            }
+            if (nodeType === 'region' || nodeType === 'market') {
+                return pt === 'org' || pt === 'region';
+            }
+            return pt === 'org';
         },
 
         typesForParentType(parentType) {
@@ -297,7 +517,8 @@ function orgsPage() {
                 return;
             }
             this.setAddNodeParent(root);
-            this.showAddNode = true;
+            this.nodeModal = 'add';
+            this.focusNodeModalInput();
         },
 
         setAddNodeParent(parent) {
@@ -311,9 +532,68 @@ function orgsPage() {
             };
         },
 
-        cancelAddNode() {
-            this.showAddNode = false;
-            this.newNode = { name: '', node_type: 'region', parent_id: null, parentName: '', parent_type: null };
+        openEditNode(node) {
+            this.closeNodeModal();
+            this.editingNode = node;
+            const parentId = node.parent_id != null && node.parent_id !== ''
+                ? Number(node.parent_id)
+                : (this.orgRootNode()?.id ?? null);
+            this.editForm = {
+                name: node.name,
+                node_type: node.node_type,
+                parent_id: parentId,
+            };
+            this.originalParentId = node.parent_id != null && node.parent_id !== ''
+                ? Number(node.parent_id)
+                : null;
+            this.nodeModal = 'edit';
+            this.focusNodeModalInput();
+        },
+
+        async saveEditNode() {
+            if (!this.editingNode || !this.selectedOrg || !this.editForm.name) {
+                toast('Name is required', 'error');
+                return;
+            }
+            this.editSaving = true;
+            const orgId = this.selectedOrg.id;
+            const nodeId = this.editingNode.id;
+
+            const updateRes = await api.put(`/orgs/${orgId}/nodes/${nodeId}`, {
+                name: this.editForm.name,
+                node_type: this.editForm.node_type,
+            });
+            if (!updateRes.ok) {
+                this.editSaving = false;
+                const err = updateRes.data?.errors
+                    ? Object.values(updateRes.data.errors).join(' ')
+                    : (updateRes.data?.error || 'Failed to update node');
+                toast(err, 'error');
+                return;
+            }
+
+            const newParentId = this.editForm.parent_id != null ? Number(this.editForm.parent_id) : null;
+            const oldParentId = this.originalParentId != null ? Number(this.originalParentId) : null;
+            if (this.editingNode.node_type !== 'org' && this.editForm.node_type !== 'org' && newParentId !== oldParentId) {
+                const moveRes = await api.put(`/orgs/${orgId}/nodes/${nodeId}/move`, {
+                    parent_id: newParentId,
+                });
+                if (!moveRes.ok) {
+                    this.editSaving = false;
+                    const err = moveRes.data?.errors
+                        ? Object.values(moveRes.data.errors).join(' ')
+                        : (moveRes.data?.error || 'Node updated but move failed');
+                    toast(err, 'error');
+                    await this.loadNodesForSelectedOrg();
+                    return;
+                }
+            }
+
+            this.editSaving = false;
+            toast('Node updated');
+            this.closeNodeModal();
+            await this.loadNodesForSelectedOrg();
+            await this.loadOrgs();
         },
 
         get filtered() {
@@ -348,7 +628,8 @@ function orgsPage() {
 
         async selectOrg(org) {
             this.selectedOrg = org;
-            this.showAddNode = false;
+            this.closeNodeModal();
+            this.collapsed = {};
             await this.loadNodesForSelectedOrg();
         },
 
@@ -374,11 +655,14 @@ function orgsPage() {
             }
 
             this.nodesLoading = false;
+            this.collapsed = {};
         },
 
         addChildNode(parent) {
+            this.closeNodeModal();
             this.setAddNodeParent(parent);
-            this.showAddNode = true;
+            this.nodeModal = 'add';
+            this.focusNodeModalInput();
         },
 
         async saveNode() {
@@ -391,7 +675,7 @@ function orgsPage() {
             const res = await api.post(`/orgs/${this.selectedOrg.id}/nodes`, body);
             if (res.ok) {
                 toast('Node added');
-                this.cancelAddNode();
+                this.closeNodeModal();
                 await this.selectOrg(this.selectedOrg);
                 await this.loadOrgs();
             } else {
