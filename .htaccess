@@ -1,27 +1,30 @@
 # NexAlert - Root .htaccess
-# Dreamhost managed vhost: document root is the repo root.
-# All requests are funneled through public/index.php (API) or public/app.php (web).
-# SSL is enforced via Dreamhost panel - this handles the rewrite.
+# Dreamhost managed hosting: webroot = repo root
+# Source dirs are blocked; entry points are index.php and app.php
 
 Options -Indexes
 Options -MultiViews
 
-# Force HTTPS (Dreamhost terminates SSL at their load balancer)
+# Force HTTPS (Dreamhost terminates SSL, passes X-Forwarded-Proto)
 RewriteEngine On
 RewriteCond %{HTTPS} off
 RewriteCond %{HTTP:X-Forwarded-Proto} !https
 RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
 
-# Block direct access to sensitive directories
-RewriteRule ^(api/|workers/|config/|db/|tests/) - [F,L]
+# Block direct access to source/config directories
+RewriteRule ^(api/|workers/|config/|db/|tests/|docs/) - [F,L]
 
-# Route /api/* to public/index.php (REST API)
-RewriteRule ^api/(.*)$ public/index.php [L,QSA]
+# Block dotfiles except .well-known (Let's Encrypt)
+RewriteRule ^\.(?!well-known) - [F,L]
 
-# Route everything else to public/app.php (web frontend)
+# Route /api/* to index.php (REST API)
+RewriteRule ^api/(.*)$ index.php [L,QSA]
+
+# Route everything else to app.php (web frontend)
+# Static files (css, js, images) are served directly
 RewriteCond %{REQUEST_FILENAME} !-f
 RewriteCond %{REQUEST_FILENAME} !-d
-RewriteRule ^(.*)$ public/app.php [L,QSA]
+RewriteRule ^(.*)$ app.php [L,QSA]
 
 # Security headers
 <IfModule mod_headers.c>

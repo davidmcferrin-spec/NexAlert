@@ -10,7 +10,7 @@ declare(strict_types=1);
 spl_autoload_register(function (string $class): void {
     // Base namespace and directory map
     $namespaceMap = [
-        'NexAlert\\' => __DIR__ . '/../api/src/',
+        'NexAlert\\' => __DIR__ . '/src/',
     ];
 
     foreach ($namespaceMap as $prefix => $baseDir) {

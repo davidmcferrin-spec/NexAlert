@@ -7,8 +7,8 @@
 
 declare(strict_types=1);
 
-// Repo root is one level up from public/
-define('NEXALERT_ROOT', dirname(__DIR__));
+// Repo root IS the webroot on Dreamhost managed hosting
+define('NEXALERT_ROOT', __DIR__);
 
 // Autoloader (PSR-4, no Composer required)
 require_once NEXALERT_ROOT . '/api/autoload.php';

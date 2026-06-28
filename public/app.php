@@ -7,7 +7,7 @@
 
 declare(strict_types=1);
 
-define('NEXALERT_ROOT', dirname(__DIR__));
+define('NEXALERT_ROOT', __DIR__);
 
 require_once NEXALERT_ROOT . '/api/autoload.php';
 

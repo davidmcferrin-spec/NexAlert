@@ -419,7 +419,7 @@ CREATE TABLE tag_approval_requests (
 -- Groups of groups allow nested distribution lists.
 -- =============================================================================
 
-CREATE TABLE groups (
+CREATE TABLE `groups` (
     id              INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     owner_org_id    INT UNSIGNED NOT NULL COMMENT 'Org that owns/administers this group',
     name            VARCHAR(150) NOT NULL,
@@ -443,7 +443,7 @@ CREATE TABLE group_memberships (
     added_by        INT UNSIGNED NULL,
     added_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     is_active       TINYINT(1) NOT NULL DEFAULT 1,
-    CONSTRAINT fk_gm_group FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE CASCADE,
+    CONSTRAINT fk_gm_group FOREIGN KEY (group_id) REFERENCES `groups`(id) ON DELETE CASCADE,
     CONSTRAINT fk_gm_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
     CONSTRAINT fk_gm_added_by FOREIGN KEY (added_by) REFERENCES users(id) ON DELETE SET NULL,
     UNIQUE KEY uq_group_user (group_id, user_id),
@@ -459,8 +459,8 @@ CREATE TABLE group_children (
     added_by        INT UNSIGNED NULL,
     added_at        DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (parent_group_id, child_group_id),
-    CONSTRAINT fk_gc_parent FOREIGN KEY (parent_group_id) REFERENCES groups(id) ON DELETE CASCADE,
-    CONSTRAINT fk_gc_child FOREIGN KEY (child_group_id) REFERENCES groups(id) ON DELETE CASCADE,
+    CONSTRAINT fk_gc_parent FOREIGN KEY (parent_group_id) REFERENCES `groups`(id) ON DELETE CASCADE,
+    CONSTRAINT fk_gc_child FOREIGN KEY (child_group_id) REFERENCES `groups`(id) ON DELETE CASCADE,
     CONSTRAINT fk_gc_added FOREIGN KEY (added_by) REFERENCES users(id) ON DELETE SET NULL,
     CHECK (parent_group_id != child_group_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -563,7 +563,7 @@ CREATE TABLE alert_targets (
     CONSTRAINT fk_at_alert FOREIGN KEY (alert_id) REFERENCES alerts(id) ON DELETE CASCADE,
     CONSTRAINT fk_at_org FOREIGN KEY (target_org_id) REFERENCES organizations(id) ON DELETE CASCADE,
     CONSTRAINT fk_at_node FOREIGN KEY (target_node_id) REFERENCES org_nodes(id) ON DELETE CASCADE,
-    CONSTRAINT fk_at_group FOREIGN KEY (target_group_id) REFERENCES groups(id) ON DELETE CASCADE,
+    CONSTRAINT fk_at_group FOREIGN KEY (target_group_id) REFERENCES `groups`(id) ON DELETE CASCADE,
     CONSTRAINT fk_at_tag FOREIGN KEY (target_tag_id) REFERENCES tags(id) ON DELETE CASCADE,
     CONSTRAINT fk_at_user FOREIGN KEY (target_user_id) REFERENCES users(id) ON DELETE CASCADE,
     INDEX idx_alert (alert_id)
