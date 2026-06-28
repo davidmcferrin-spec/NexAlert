@@ -205,6 +205,10 @@ class TagService
      */
     public static function resolveTargetRow(Database $db, array $target): array
     {
+        if (!empty($target['conj_terms']) && is_array($target['conj_terms'])) {
+            return TargetExpressionService::resolveConjunctionUserIds($db, $target['conj_terms']);
+        }
+
         if (!empty($target['target_user_id'])) {
             $uid = (int) $target['target_user_id'];
             $active = (int) $db->fetchValue(

@@ -1,76 +1,129 @@
 <?php
 $pageTitle    = 'Test Send';
-$pageSubtitle = 'Preview alert recipients and build canonical target expressions';
+$pageSubtitle = 'Preview alert recipients and build nested AND/OR target expressions';
 ?>
 
 <div x-data="testSendPage()" x-init="init()" class="space-y-6">
 
     <div class="rounded-xl border border-blue-200 dark:border-blue-900/50 bg-blue-50 dark:bg-blue-950/30 px-4 py-3 text-sm text-blue-800 dark:text-blue-200">
-        Preview uses the same resolver as live alert sends. The canonical expression below is what you would pass to
-        <code class="font-mono text-xs">POST /api/v1/alert</code> as <code class="font-mono text-xs">targets</code>.
-        Within each OR group, dimensions are <strong>AND</strong>ed; groups are unioned.
+        Build nested <strong>AND</strong> / <strong>OR</strong> groups with multiple tags, nodes, groups, and users.
+        Example: <code class="font-mono text-xs">org:nexstar AND (tag:eng OR tag:noc OR group:on-call@nexstar)</code>.
+        Preview uses the same resolver as live alert sends.
     </div>
 
     <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
 
-        <!-- Visual builder -->
+        <!-- Nested tree builder -->
         <div class="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 overflow-hidden">
-            <div class="px-5 py-4 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
+            <div class="px-5 py-4 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between gap-2 flex-wrap">
                 <h2 class="text-sm font-semibold text-gray-900 dark:text-white">Target Builder</h2>
-                <button @click="addOrRow()"
-                        class="text-xs font-medium text-red-600 hover:text-red-700 dark:text-red-400">+ Add OR group</button>
+                <div class="flex items-center gap-2">
+                    <button @click="addOrBranch()"
+                            class="text-xs font-medium text-red-600 hover:text-red-700 dark:text-red-400">+ OR branch</button>
+                    <button @click="resetTree()"
+                            class="text-xs text-gray-400 hover:text-gray-600">Reset</button>
+                </div>
             </div>
-            <div class="p-5 space-y-4">
-                <template x-for="(row, rowIdx) in orRows" :key="rowIdx">
-                    <div class="space-y-3">
-                        <div x-show="rowIdx > 0"
-                             class="flex items-center gap-3 text-[10px] font-bold uppercase tracking-wider text-red-500">
-                            <span class="flex-1 border-t border-red-200 dark:border-red-900/50"></span>
-                            OR
-                            <span class="flex-1 border-t border-red-200 dark:border-red-900/50"></span>
-                        </div>
-                        <div class="rounded-xl border border-gray-200 dark:border-gray-700 p-4 space-y-3">
-                        <div class="flex items-center justify-between">
-                            <span class="text-xs font-semibold uppercase tracking-wider text-gray-400"
-                                  x-text="'OR group ' + (rowIdx + 1)"></span>
-                            <button @click="removeOrRow(rowIdx)" x-show="orRows.length > 1"
-                                    class="text-xs text-gray-400 hover:text-red-500">Remove</button>
-                        </div>
-
-                        <div class="flex flex-wrap items-center gap-2 min-h-[2rem]">
-                            <template x-for="(dimKey, dimIdx) in rowDimensionKeys(row)" :key="dimKey">
-                                <span class="inline-flex items-center gap-1.5">
-                                    <span x-show="dimIdx > 0"
-                                          class="text-[10px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400 px-0.5">AND</span>
-                                    <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-mono
-                                                 bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200">
-                                        <span x-text="dimKey + ':' + row[dimKey]"></span>
-                                        <button @click="removeDimension(rowIdx, dimKey)" class="text-gray-400 hover:text-red-500">&times;</button>
-                                    </span>
-                                </span>
-                            </template>
-                            <span x-show="rowDimensionKeys(row).length === 0" class="text-xs text-gray-400 italic">No dimensions — add one below</span>
-                        </div>
-
-                        <div class="flex flex-wrap gap-2">
-                            <template x-for="t in dimensionTypes" :key="t">
-                                <button @click="openPicker(rowIdx, t)"
-                                        x-show="!row[t]"
-                                        class="px-2.5 py-1 text-xs rounded-lg border border-dashed border-gray-300
-                                               dark:border-gray-600 text-gray-500 hover:border-red-400 hover:text-red-600"
-                                        x-text="'+ ' + t"></button>
-                            </template>
-                            <span x-show="rowDimensionKeys(row).length >= dimensionTypes.length"
-                                  class="text-xs text-gray-400 italic self-center">All dimensions set</span>
-                        </div>
-                        </div>
+            <div class="p-5">
+                <div class="rounded-xl border-2 border-red-200 dark:border-red-900/40 p-4 space-y-2 bg-red-50/30 dark:bg-red-950/10">
+                    <div class="flex items-center justify-between gap-2 flex-wrap mb-2">
+                        <span class="text-xs font-bold uppercase tracking-wider text-red-600 dark:text-red-400">Root — OR</span>
+                        <span class="text-xs text-gray-400">Union of branches below</span>
                     </div>
-                </template>
 
-                <p class="text-xs text-gray-400">
+                    <template x-for="(branch, branchIdx) in targetTree.children" :key="'b'+branchIdx">
+                        <div class="space-y-2">
+                            <div x-show="branchIdx > 0"
+                                 class="flex items-center gap-2 text-[10px] font-bold uppercase text-red-500 tracking-wider py-1">
+                                <span class="flex-1 border-t border-red-200 dark:border-red-800"></span>OR<span class="flex-1 border-t border-red-200 dark:border-red-800"></span>
+                            </div>
+                            <div x-data="{ branchPath: 'root.' + branchIdx }">
+                                <!-- AND branch panel -->
+                                <div class="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-3 space-y-2">
+                                    <div class="flex items-center justify-between gap-2">
+                                        <span class="text-[10px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400">AND branch</span>
+                                        <button x-show="$root.targetTree.children.length > 1"
+                                                @click="$root.removeBranch(branchPath)"
+                                                class="text-xs text-gray-400 hover:text-red-500">Remove branch</button>
+                                    </div>
+
+                                    <!-- Children of AND branch (terms + OR subgroups) -->
+                                    <template x-for="(child, ci) in $root.nodeAt(branchPath).children" :key="branchPath + '.' + ci">
+                                        <div>
+                                            <!-- OR subgroup -->
+                                            <template x-if="child.type === 'group'">
+                                                <div class="rounded-lg border border-dashed border-amber-300 dark:border-amber-800 p-2 space-y-2 ml-2">
+                                                    <div class="flex items-center justify-between gap-2">
+                                                        <span class="text-[10px] font-bold uppercase text-amber-500">OR subgroup</span>
+                                                        <button @click="$root.removeChild(branchPath + '.' + ci)"
+                                                                class="text-xs text-gray-400 hover:text-red-500">&times;</button>
+                                                    </div>
+                                                    <div class="flex flex-wrap items-center gap-1.5 min-h-[1.5rem]">
+                                                        <template x-for="(sub, si) in child.children" :key="branchPath + '.' + ci + '.' + si">
+                                                            <span class="inline-flex items-center gap-1">
+                                                                <span x-show="si > 0" class="text-[9px] font-bold text-red-500 uppercase">or</span>
+                                                                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-mono
+                                                                             bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200">
+                                                                    <span x-text="sub.dim + ':' + (sub.label || sub.value)"></span>
+                                                                    <button @click="$root.removeChild(branchPath + '.' + ci + '.' + si)"
+                                                                            class="text-gray-400 hover:text-red-500">&times;</button>
+                                                                </span>
+                                                            </span>
+                                                        </template>
+                                                        <span x-show="child.children.length === 0" class="text-xs text-gray-400 italic">Empty — add terms</span>
+                                                    </div>
+                                                    <div class="flex flex-wrap gap-1">
+                                                        <template x-for="t in $root.dimensionTypes" :key="t">
+                                                            <button @click="$root.openPicker(branchPath + '.' + ci, t)"
+                                                                    class="px-2 py-0.5 text-[10px] rounded border border-dashed border-gray-300
+                                                                           dark:border-gray-600 text-gray-500 hover:border-red-400 hover:text-red-600"
+                                                                    x-text="'+ ' + t"></button>
+                                                        </template>
+                                                    </div>
+                                                </div>
+                                            </template>
+                                            <!-- Direct AND term -->
+                                            <template x-if="child.type === 'term'">
+                                                <div class="flex items-center gap-2 ml-2">
+                                                    <span x-show="ci > 0" class="text-[9px] font-bold text-amber-600 uppercase">and</span>
+                                                    <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-mono
+                                                                 bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200">
+                                                        <span x-text="child.dim + ':' + (child.label || child.value)"></span>
+                                                        <button @click="$root.removeChild(branchPath + '.' + ci)"
+                                                                class="text-gray-400 hover:text-red-500">&times;</button>
+                                                    </span>
+                                                </div>
+                                            </template>
+                                        </div>
+                                    </template>
+
+                                    <div x-show="$root.nodeAt(branchPath).children.length === 0"
+                                         class="text-xs text-gray-400 italic ml-2">No conditions — add a term or OR subgroup</div>
+
+                                    <div class="flex flex-wrap gap-1.5 pt-1 border-t border-gray-100 dark:border-gray-800">
+                                        <template x-for="t in $root.dimensionTypes" :key="'d'+t">
+                                            <button @click="$root.openPicker(branchPath, t)"
+                                                    class="px-2 py-0.5 text-[10px] rounded border border-dashed border-gray-300
+                                                           dark:border-gray-600 text-gray-500 hover:border-red-400 hover:text-red-600"
+                                                    x-text="'+ ' + t"></button>
+                                        </template>
+                                        <button @click="$root.addOrSubgroup(branchPath)"
+                                                class="px-2 py-0.5 text-[10px] rounded border border-dashed border-amber-400
+                                                       text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/30">
+                                            + OR subgroup
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+
+                <p class="text-xs text-gray-400 mt-4">
                     <code class="font-mono">org</code> = home org ·
                     <code class="font-mono">node</code> = membership subtree ·
-                    <code class="font-mono">tag</code> / <code class="font-mono">group</code> / <code class="font-mono">user</code> as labeled
+                    <code class="font-mono">tag</code> / <code class="font-mono">group</code> / <code class="font-mono">user</code>
+                    · Use OR subgroups for multiple tags/groups/users under one AND branch
                 </p>
             </div>
         </div>
@@ -82,8 +135,8 @@ $pageSubtitle = 'Preview alert recipients and build canonical target expressions
                     <h2 class="text-sm font-semibold text-gray-900 dark:text-white">Canonical Expression</h2>
                 </div>
                 <div class="p-5 space-y-3">
-                    <textarea x-model="expression" @input="onExpressionInput()"
-                              rows="3" placeholder="(org:nexstar AND tag:engineering) OR group:noc@nexstar"
+                    <textarea x-model="expression" rows="4"
+                              placeholder="(org:nexstar AND (tag:engineering OR tag:noc)) OR group:on-call@nexstar"
                               class="w-full px-3 py-2 text-sm font-mono rounded-xl border border-gray-200 dark:border-gray-700
                                      bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-red-500"></textarea>
                     <div class="flex flex-wrap gap-2">
@@ -109,6 +162,9 @@ $pageSubtitle = 'Preview alert recipients and build canonical target expressions
                            class="px-3 py-1.5 text-xs font-semibold rounded-lg border border-red-600 text-red-600 hover:bg-red-50 dark:hover:bg-red-950">
                             Send Alert →
                         </a>
+                    </div>
+                    <div x-show="preview.row_count != null" class="text-xs text-gray-500">
+                        Resolves to <strong x-text="preview.row_count"></strong> alert target row(s) after DNF expansion
                     </div>
                     <div x-show="parseErrors.length" class="text-xs text-red-600 dark:text-red-400 space-y-1">
                         <template x-for="(err, i) in parseErrors" :key="i">
@@ -233,87 +289,87 @@ $pageSubtitle = 'Preview alert recipients and build canonical target expressions
 <script>
 function testSendPage() {
     return {
-        orRows: [{}],
+        targetTree: defaultTargetTree(),
         expression: '',
         parseErrors: [],
         dimensionTypes: ['org', 'node', 'tag', 'group', 'user'],
         loading: false,
         preview: {},
         restSnippet: '',
-        picker: { open: false, type: '', rowIdx: 0, query: '', loading: false },
+        picker: { open: false, type: '', path: '', query: '', loading: false },
         pickerResults: [],
         entities: { orgs: [], tags: [], groups: [], nodes: [], users: [] },
         syncLock: false,
 
         async init() {
             await this.loadEntities('');
-        },
-
-        addOrRow() {
-            this.orRows = [...this.orRows, {}];
-            this.syncFromBuilder();
-        },
-
-        removeOrRow(idx) {
-            this.orRows = this.orRows.filter((_, i) => i !== idx);
-            if (this.orRows.length === 0) this.orRows = [{}];
-            this.syncFromBuilder();
-        },
-
-        rowDimensionKeys(row) {
-            return this.dimensionTypes.filter(k => row[k]);
-        },
-
-        removeDimension(rowIdx, dimKey) {
-            const next = { ...this.orRows[rowIdx] };
-            delete next[dimKey];
-            this.orRows = this.orRows.map((row, i) => (i === rowIdx ? next : row));
-            this.syncFromBuilder();
-        },
-
-        buildExpressionFromRows() {
-            const terms = this.orRows.map(row => {
-                const order = ['org', 'node', 'tag', 'group', 'user'];
-                const parts = order.filter(k => row[k]).map(k => k + ':' + row[k]);
-                if (parts.length === 0) return null;
-                return parts.length === 1 ? parts[0] : '(' + parts.join(' AND ') + ')';
-            }).filter(Boolean);
-            return terms.join(' OR ');
-        },
-
-        syncFromBuilder() {
-            if (this.syncLock) return;
-            this.expression = this.buildExpressionFromRows();
-            this.parseErrors = [];
-        },
-
-        onExpressionInput() {
-            // debounced preview optional; user clicks Preview
-        },
-
-        syncFromExpression() {
-            const parts = this.expression.split(/\s+OR\s+/i).map(s => s.trim()).filter(Boolean);
-            const rows = [];
-            for (const part of parts) {
-                let inner = part.trim();
-                while (inner.startsWith('(') && inner.endsWith(')')) {
-                    inner = inner.slice(1, -1).trim();
-                }
-                const andParts = inner.split(/\s+AND\s+/i).map(s => s.trim());
-                const row = {};
-                for (const p of andParts) {
-                    const m = p.match(/^(org|node|tag|group|user):(.+)$/i);
-                    if (m) row[m[1].toLowerCase()] = m[2];
-                }
-                if (Object.keys(row).length) rows.push(row);
+            const saved = sessionStorage.getItem('nexalert_target_expression');
+            if (saved) {
+                this.expression = saved;
+                sessionStorage.removeItem('nexalert_target_expression');
+                await this.syncFromExpression();
             }
-            this.orRows = rows.length ? rows : [{}];
-            this.syncFromBuilder();
-            toast('Expression loaded into builder');
         },
 
-        openPicker(rowIdx, type) {
-            this.picker = { open: true, type, rowIdx, query: '', loading: true };
+        resetTree() {
+            this.targetTree = defaultTargetTree();
+            this.syncFromBuilder();
+        },
+
+        addOrBranch() {
+            this.targetTree = cloneTree(this.targetTree);
+            this.targetTree.children.push(defaultAndBranch());
+            this.syncFromBuilder();
+        },
+
+        removeBranch(path) {
+            const idx = parseInt(path.split('.').pop(), 10);
+            this.targetTree = cloneTree(this.targetTree);
+            this.targetTree.children.splice(idx, 1);
+            if (this.targetTree.children.length === 0) {
+                this.targetTree.children.push(defaultAndBranch());
+            }
+            this.syncFromBuilder();
+        },
+
+        addOrSubgroup(path) {
+            this.targetTree = cloneTree(this.targetTree);
+            const node = this.nodeAt(path);
+            if (node && node.type === 'group') {
+                node.children.push({ type: 'group', op: 'OR', children: [] });
+            }
+            this.targetTree = cloneTree(this.targetTree);
+            this.syncFromBuilder();
+        },
+
+        removeChild(path) {
+            const parts = path.replace(/^root\.?/, '').split('.').filter(Boolean);
+            const idx = parseInt(parts.pop(), 10);
+            this.targetTree = cloneTree(this.targetTree);
+            let parent = this.targetTree;
+            for (let i = 0; i < parts.length; i++) {
+                parent = parent.children[parseInt(parts[i], 10)];
+            }
+            if (parent && parent.children) {
+                parent.children.splice(idx, 1);
+            }
+            this.targetTree = cloneTree(this.targetTree);
+            this.syncFromBuilder();
+        },
+
+        nodeAt(path) {
+            if (path === 'root') return this.targetTree;
+            const parts = path.replace(/^root\.?/, '').split('.').filter(p => p !== '').map(Number);
+            let n = this.targetTree;
+            for (const i of parts) {
+                if (!n || !n.children || n.children[i] === undefined) return null;
+                n = n.children[i];
+            }
+            return n;
+        },
+
+        openPicker(path, type) {
+            this.picker = { open: true, type, path, query: '', loading: true };
             this.loadEntities('').then(() => {
                 this.filterPickerResults();
                 this.picker.loading = false;
@@ -322,9 +378,7 @@ function testSendPage() {
 
         async loadEntities(q) {
             const res = await api.get('/targets/entities?q=' + encodeURIComponent(q) + '&limit=50');
-            if (res.ok) {
-                this.entities = res.data.data;
-            }
+            if (res.ok) this.entities = res.data.data;
         },
 
         async searchEntities() {
@@ -337,7 +391,7 @@ function testSendPage() {
         filterPickerResults() {
             const type = this.picker.type;
             const q = this.picker.query.toLowerCase();
-            let list = this.entities[type + 's'] || this.entities[type] || [];
+            let list = this.entities[type + 's'] || [];
             if (type === 'org') list = this.entities.orgs;
             if (type === 'tag') list = this.entities.tags;
             if (type === 'group') list = this.entities.groups;
@@ -353,9 +407,8 @@ function testSendPage() {
                              _sub: item.is_system == 1 ? 'System tag' : 'Manual tag' };
                 }
                 if (type === 'group') {
-                    const expr = item.expression || ('group:' + item.slug + '@' + item.org_slug);
-                    const val  = item.slug + '@' + item.org_slug;
-                    return { _key: 'g' + item.id, _label: item.name, _expr: expr, _val: val, _sub: item.org_name };
+                    const val = item.slug + '@' + item.org_slug;
+                    return { _key: 'g' + item.id, _label: item.name, _expr: item.expression || ('group:' + val), _val: val, _sub: item.org_name };
                 }
                 if (type === 'node') {
                     return { _key: 'n' + item.id, _label: item.name, _expr: item.expression || ('node:' + item.id),
@@ -376,34 +429,59 @@ function testSendPage() {
         },
 
         selectEntity(item) {
-            const rowIdx = this.picker.rowIdx;
+            const path = this.picker.path;
             const type = this.picker.type;
-            this.orRows = this.orRows.map((row, i) =>
-                i === rowIdx ? { ...row, [type]: item._val } : row
-            );
+            this.targetTree = cloneTree(this.targetTree);
+            const node = this.nodeAt(path);
+            if (!node || node.type !== 'group') {
+                this.picker.open = false;
+                return;
+            }
+            node.children.push({
+                type: 'term',
+                dim: type,
+                value: item._val,
+                label: item._label,
+            });
+            this.targetTree = cloneTree(this.targetTree);
             this.picker.open = false;
             this.syncFromBuilder();
             this.runPreview();
         },
 
-        structuredPayload() {
-            return this.orRows
-                .map(row => {
-                    const o = {};
-                    ['org', 'node', 'tag', 'group', 'user'].forEach(k => { if (row[k]) o[k] = row[k]; });
-                    return o;
-                })
-                .filter(o => Object.keys(o).length > 0);
+        syncFromBuilder() {
+            if (this.syncLock) return;
+            this.expression = treeToExpression(this.targetTree);
+            this.parseErrors = [];
+        },
+
+        async syncFromExpression() {
+            if (!this.expression.trim()) return;
+            const res = await api.post('/targets/preview', { expression: this.expression.trim() });
+            if (!res.ok) {
+                toast(res.data?.error || 'Could not parse expression', 'error');
+                return;
+            }
+            const data = res.data.data;
+            if (!data.valid) {
+                this.parseErrors = data.errors || [];
+                toast('Expression has errors', 'error');
+                return;
+            }
+            if (data.ast) {
+                this.targetTree = astToTree(data.ast);
+            }
+            this.syncLock = true;
+            this.expression = data.expression || this.expression;
+            this.syncLock = false;
+            toast('Expression loaded into builder');
         },
 
         async runPreview() {
             this.loading = true;
             this.parseErrors = [];
             this.syncFromBuilder();
-            const targets = this.structuredPayload();
-            const body = targets.length
-                ? { targets }
-                : { expression: this.expression };
+            const body = { target_tree: this.targetTree, expression: this.expression };
 
             const res = await api.post('/targets/preview', body);
             this.loading = false;
@@ -414,11 +492,16 @@ function testSendPage() {
             }
 
             this.preview = res.data.data;
+            this.preview.row_count = (this.preview.targets || []).length;
+
             if (!this.preview.valid) {
                 this.parseErrors = this.preview.errors || [];
             } else {
                 this.syncLock = true;
                 this.expression = this.preview.expression || this.expression;
+                if (this.preview.ast) {
+                    this.targetTree = astToTree(this.preview.ast);
+                }
                 this.syncLock = false;
                 if (this.preview.rest_api?.body) {
                     this.restSnippet = JSON.stringify(this.preview.rest_api.body, null, 2);
@@ -434,5 +517,115 @@ function testSendPage() {
             navigator.clipboard.writeText(this.restSnippet).then(() => toast('JSON copied'));
         },
     };
+}
+
+function defaultTargetTree() {
+    return { type: 'group', op: 'OR', children: [defaultAndBranch()] };
+}
+
+function defaultAndBranch() {
+    return { type: 'group', op: 'AND', children: [] };
+}
+
+function cloneTree(t) {
+    return JSON.parse(JSON.stringify(t));
+}
+
+function treeToExpression(node) {
+    if (node.type === 'term') {
+        return node.dim + ':' + node.value;
+    }
+    if (!node.children || node.children.length === 0) return '';
+
+    const op = node.op || 'AND';
+    const parts = node.children.map(c => treeToExpression(c)).filter(Boolean);
+    if (parts.length === 0) return '';
+    if (parts.length === 1) return parts[0];
+
+    const join = ' ' + op + ' ';
+    const inner = parts.map(p => {
+        if (p.includes(' ' + (op === 'AND' ? 'OR' : 'AND') + ' ') || (p.startsWith('(') && p.endsWith(')'))) return p;
+        if (op === 'AND' && p.includes(' OR ')) return '(' + p + ')';
+        if (op === 'OR' && p.includes(' AND ')) return '(' + p + ')';
+        return p;
+    }).join(join);
+
+    return inner;
+}
+
+function astToTree(ast) {
+    if (!ast || (ast.type === 'group' && (!ast.children || ast.children.length === 0))) {
+        return defaultTargetTree();
+    }
+
+    let rootOr;
+    if (ast.type === 'group' && ast.op === 'OR') {
+        rootOr = ast;
+    } else {
+        rootOr = { type: 'group', op: 'OR', children: [ast] };
+    }
+
+    return {
+        type: 'group',
+        op: 'OR',
+        children: rootOr.children.map(child => andBranchFromAst(child)),
+    };
+}
+
+function andBranchFromAst(node) {
+    if (node.type === 'group' && node.op === 'AND') {
+        return {
+            type: 'group',
+            op: 'AND',
+            children: node.children.flatMap(c => flattenAndChild(c)),
+        };
+    }
+
+    return {
+        type: 'group',
+        op: 'AND',
+        children: [convertAstNodeToTreeChild(node)],
+    };
+}
+
+function flattenAndChild(node) {
+    if (node.type === 'term') {
+        return [convertAstNodeToTreeChild(node)];
+    }
+    if (node.type === 'group' && node.op === 'AND') {
+        return node.children.flatMap(c => flattenAndChild(c));
+    }
+
+    return [convertAstNodeToTreeChild(node)];
+}
+
+function convertAstNodeToTreeChild(node) {
+    if (node.type === 'term') {
+        return { type: 'term', dim: node.dim, value: node.value, label: node.value };
+    }
+    if (node.type === 'group' && node.op === 'OR') {
+        return {
+            type: 'group',
+            op: 'OR',
+            children: node.children.map(c =>
+                c.type === 'term'
+                    ? { type: 'term', dim: c.dim, value: c.value, label: c.value }
+                    : convertAstNodeToTreeChild(c)
+            ),
+        };
+    }
+    if (node.type === 'group' && node.op === 'AND') {
+        return {
+            type: 'group',
+            op: 'OR',
+            children: node.children.map(c =>
+                c.type === 'term'
+                    ? { type: 'term', dim: c.dim, value: c.value, label: c.value }
+                    : convertAstNodeToTreeChild(c)
+            ),
+        };
+    }
+
+    return { type: 'term', dim: 'tag', value: 'unknown', label: 'unknown' };
 }
 </script>

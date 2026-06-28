@@ -138,10 +138,14 @@ class AlertService
             $alertId = $db->lastInsertId();
 
             foreach ($targetRows as $target) {
+                $conjJson = !empty($target['conj_terms']) && is_array($target['conj_terms'])
+                    ? json_encode($target['conj_terms'])
+                    : null;
+
                 $db->execute(
                     'INSERT INTO alert_targets
-                        (alert_id, target_org_id, target_node_id, target_group_id, target_tag_id, target_user_id, target_label)
-                     VALUES (?, ?, ?, ?, ?, ?, ?)',
+                        (alert_id, target_org_id, target_node_id, target_group_id, target_tag_id, target_user_id, target_label, conj_terms)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
                     [
                         $alertId,
                         $target['target_org_id'] ?? null,
@@ -150,6 +154,7 @@ class AlertService
                         $target['target_tag_id'] ?? null,
                         $target['target_user_id'] ?? null,
                         $target['target_label'] ?? null,
+                        $conjJson,
                     ]
                 );
             }
@@ -183,21 +188,39 @@ class AlertService
      */
     private static function resolveInputTargets(Database $db, Request $request): array
     {
+        $tree = $request->input('target_tree');
+        if (is_array($tree) && ($tree['type'] ?? '') === 'group') {
+            return self::compileTreeToTargets($db, $tree);
+        }
+
         $structured = $request->input('targets_structured');
         if (is_array($structured) && $structured !== []) {
-            $rows     = TargetExpressionService::structuredToRows($structured);
-            $converted = TargetExpressionService::rowsToAlertTargets($db, $rows);
+            if (($structured['type'] ?? '') === 'group') {
+                return self::compileTreeToTargets($db, $structured);
+            }
+
+            $rows      = TargetExpressionService::structuredToFlatRows($structured);
+            $ast       = \NexAlert\Services\TargetAstService::flatRowsToAst($rows);
+            $dnf       = \NexAlert\Services\TargetAstService::astToDnf($ast);
+            if ($dnf['errors'] !== []) {
+                return ['targets' => [], 'errors' => $dnf['errors']];
+            }
+            $converted = TargetExpressionService::dnfToAlertTargets($db, $dnf['conjunctions']);
 
             return ['targets' => $converted['targets'], 'errors' => $converted['errors']];
         }
 
         $expression = trim((string) $request->input('targets', ''));
         if ($expression !== '') {
-            $parsed    = TargetExpressionService::parse($expression);
-            if ($parsed['errors'] !== []) {
-                return ['targets' => [], 'errors' => $parsed['errors']];
+            $compiled = TargetExpressionService::compileExpressionAst($expression);
+            if ($compiled['errors'] !== []) {
+                return ['targets' => [], 'errors' => $compiled['errors']];
             }
-            $converted = TargetExpressionService::rowsToAlertTargets($db, $parsed['rows']);
+            $dnf = \NexAlert\Services\TargetAstService::astToDnf($compiled['ast']);
+            if ($dnf['errors'] !== []) {
+                return ['targets' => [], 'errors' => $dnf['errors']];
+            }
+            $converted = TargetExpressionService::dnfToAlertTargets($db, $dnf['conjunctions']);
 
             return ['targets' => $converted['targets'], 'errors' => $converted['errors']];
         }
@@ -231,6 +254,25 @@ class AlertService
         }
 
         return ['targets' => [], 'errors' => ['targets expression or structured targets required']];
+    }
+
+    /**
+     * @param array<string, mixed> $tree
+     * @return array{targets: list<array<string, mixed>>, errors: string[]}
+     */
+    private static function compileTreeToTargets(Database $db, array $tree): array
+    {
+        $compiled = TargetExpressionService::compileExpressionAst('', $tree);
+        if ($compiled['errors'] !== []) {
+            return ['targets' => [], 'errors' => $compiled['errors']];
+        }
+        $dnf = \NexAlert\Services\TargetAstService::astToDnf($compiled['ast']);
+        if ($dnf['errors'] !== []) {
+            return ['targets' => [], 'errors' => $dnf['errors']];
+        }
+        $converted = TargetExpressionService::dnfToAlertTargets($db, $dnf['conjunctions']);
+
+        return ['targets' => $converted['targets'], 'errors' => $converted['errors']];
     }
 
     /**
@@ -469,10 +511,18 @@ class AlertService
         );
 
         $targets = $db->fetchAll(
-            'SELECT id, target_label, target_org_id, target_node_id, target_group_id, target_tag_id, target_user_id
+            'SELECT id, target_label, target_org_id, target_node_id, target_group_id, target_tag_id, target_user_id, conj_terms
              FROM alert_targets WHERE alert_id = ?',
             [$alertId]
         );
+
+        foreach ($targets as &$target) {
+            if (!empty($target['conj_terms']) && is_string($target['conj_terms'])) {
+                $decoded = json_decode($target['conj_terms'], true);
+                $target['conj_terms'] = is_array($decoded) ? $decoded : null;
+            }
+        }
+        unset($target);
 
         return [
             'id'               => (int) $alert['id'],

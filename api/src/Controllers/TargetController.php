@@ -20,23 +20,28 @@ class TargetController
 {
     public static function preview(Request $request): never
     {
-        $db          = Database::getInstance();
-        $expression  = trim((string) $request->input('expression', ''));
-        $structured  = $request->input('targets');
-        $rows        = null;
+        $db         = Database::getInstance();
+        $expression = trim((string) $request->input('expression', ''));
+        $structured = $request->input('targets');
+        $tree       = $request->input('target_tree');
+        $rows       = null;
 
-        if (is_array($structured) && $structured !== []) {
-            $rows = TargetExpressionService::structuredToRows($structured);
-            if ($expression === '') {
-                $expression = TargetExpressionService::rowsToExpression($rows);
+        if (is_array($tree) && ($tree['type'] ?? '') === 'group') {
+            $result = TargetExpressionService::preview($db, null, null, $tree);
+        } elseif (is_array($structured) && $structured !== []) {
+            if (($structured['type'] ?? '') === 'group') {
+                $result = TargetExpressionService::preview($db, null, null, $structured);
+            } else {
+                $rows   = TargetExpressionService::structuredToRows($structured);
+                $result = TargetExpressionService::preview($db, $expression !== '' ? $expression : null, $rows);
             }
+        } else {
+            $result = TargetExpressionService::preview($db, $expression !== '' ? $expression : null, null);
         }
-
-        $result = TargetExpressionService::preview($db, $expression !== '' ? $expression : null, $rows);
 
         if ($result['valid'] ?? false) {
             AuditService::log('target.preview', 'target', 'preview', [
-                'expression'   => $result['expression'],
+                'expression'      => $result['expression'],
                 'recipient_count' => $result['counts']['total_unique'] ?? 0,
             ], $request->user['uid']);
         }

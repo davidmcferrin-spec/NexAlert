@@ -4,12 +4,13 @@
  * Parses canonical targeting strings, resolves identifiers to alert_targets rows,
  * and previews recipient sets via TagService::resolveTargetRow().
  *
- * Expression grammar:
- *   (org:slug AND tag:slug) OR group:slug OR user:username
+ * Expression grammar (nested AND/OR):
+ *   org:nexstar AND (tag:eng OR tag:noc) OR group:noc@nexstar
+ *   tag:a,b,c  →  shorthand for tag:a OR tag:b OR tag:c
  *
  * Dimensions: org, node, tag, group, user
- * - Within parentheses (or a single AND group): dimensions are ANDed
- * - Between OR terms: union (deduplicated)
+ * - Parsed to AST, normalized to DNF, stored as alert_targets rows (OR of AND clauses)
+ * - Compound AND (e.g. tag:a AND tag:b) uses conj_terms JSON column
  * - group:slug@org-slug disambiguates groups with the same slug in different orgs
  * - node:123 uses numeric id; node:slug when unique among active nodes
  */
@@ -26,9 +27,320 @@ class TargetExpressionService
     private const DIM_ORDER = ['org', 'node', 'tag', 'group', 'user'];
 
     /**
-     * @return array{rows: list<array<string, string>>, errors: string[]}
+     * @return array{rows: list<array<string, string>>, errors: string[], ast?: array, expression?: string}
      */
     public static function parse(string $expression): array
+    {
+        $compiled = self::compileExpressionAst($expression);
+        if ($compiled['errors'] !== []) {
+            return ['rows' => [], 'errors' => $compiled['errors']];
+        }
+
+        return [
+            'rows'       => $compiled['legacy_rows'],
+            'errors'     => [],
+            'ast'        => $compiled['ast'],
+            'expression' => $compiled['expression'],
+        ];
+    }
+
+    /**
+     * Compile expression or builder tree to alert target rows.
+     *
+     * @param array<string, mixed>|null $tree
+     * @return array{
+     *   legacy_rows: list<array<string, string>>,
+     *   ast: ?array,
+     *   expression: string,
+     *   errors: string[]
+     * }
+     */
+    public static function compileExpressionAst(string $expression, ?array $tree = null): array
+    {
+        if ($tree !== null) {
+            $parsed = TargetAstService::treeToAst($tree);
+        } else {
+            $parsed = TargetAstService::parseExpression($expression);
+        }
+
+        if ($parsed['errors'] !== []) {
+            return [
+                'legacy_rows' => [],
+                'ast'         => null,
+                'expression'  => trim($expression),
+                'errors'      => $parsed['errors'],
+            ];
+        }
+
+        $ast = $parsed['ast'];
+        if ($ast === null) {
+            return [
+                'legacy_rows' => [],
+                'ast'         => null,
+                'expression'  => '',
+                'errors'      => ['Expression is empty'],
+            ];
+        }
+
+        $dnf = TargetAstService::astToDnf($ast);
+        if ($dnf['errors'] !== []) {
+            return [
+                'legacy_rows' => [],
+                'ast'         => $ast,
+                'expression'  => TargetAstService::astToExpression($ast),
+                'errors'      => $dnf['errors'],
+            ];
+        }
+
+        if ($dnf['conjunctions'] === []) {
+            return [
+                'legacy_rows' => [],
+                'ast'         => $ast,
+                'expression'  => '',
+                'errors'      => ['No valid targeting terms found'],
+            ];
+        }
+
+        return [
+            'legacy_rows' => self::dnfToLegacyRows($dnf['conjunctions']),
+            'ast'         => $ast,
+            'expression'  => TargetAstService::dnfToExpression($dnf['conjunctions']),
+            'errors'      => [],
+        ];
+    }
+
+    /**
+     * @param list<array<string, mixed>> $structured Flat rows and/or builder tree
+     * @return list<array<string, string>>
+     */
+    public static function structuredToRows(array $structured): array
+    {
+        if ($structured !== [] && ($structured['type'] ?? null) === 'group') {
+            $compiled = self::compileExpressionAst('', $structured);
+
+            return $compiled['legacy_rows'];
+        }
+
+        $rows = [];
+        foreach ($structured as $item) {
+            if (!is_array($item)) {
+                continue;
+            }
+            if (($item['type'] ?? '') === 'group') {
+                $compiled = self::compileExpressionAst('', $item);
+
+                return $compiled['legacy_rows'];
+            }
+
+            $row = [];
+            foreach (self::DIM_ORDER as $dim) {
+                if (!empty($item[$dim])) {
+                    $row[$dim] = strtolower(trim((string) $item[$dim]));
+                }
+            }
+
+            if ($row !== []) {
+                $rows[] = $row;
+            }
+        }
+
+        return $rows;
+    }
+
+    /**
+     * @param list<list<array<string, mixed>>> $conjunctions
+     * @return list<array<string, string>>
+     */
+    private static function dnfToLegacyRows(array $conjunctions): array
+    {
+        $rows = [];
+        foreach ($conjunctions as $conj) {
+            $row = [];
+            foreach ($conj as $term) {
+                $dim = (string) ($term['dim'] ?? '');
+                if (in_array($dim, self::DIM_ORDER, true) && ($term['value'] ?? '') !== '') {
+                    $row[$dim] = (string) $term['value'];
+                }
+            }
+            if ($row !== []) {
+                $rows[] = $row;
+            }
+        }
+
+        return $rows;
+    }
+
+    /**
+     * @param list<list<array<string, mixed>>> $conjunctions
+     */
+    public static function dnfToAlertTargets(Database $db, array $conjunctions): array
+    {
+        $resolveRows = TargetAstService::dnfToResolveRows($conjunctions);
+        $targets     = [];
+        $errors      = [];
+        $warnings    = [];
+
+        foreach ($resolveRows as $idx => $resolveRow) {
+            if (!empty($resolveRow['conj_terms']) && is_array($resolveRow['conj_terms'])) {
+                $resolved = self::resolveConjunctionTerms($db, $resolveRow['conj_terms'], $idx + 1);
+                $errors   = array_merge($errors, $resolved['errors']);
+                if ($resolved['target'] !== null) {
+                    $targets[] = $resolved['target'];
+                }
+                continue;
+            }
+
+            $legacy = $resolveRow['_legacy'] ?? [];
+            if ($legacy === []) {
+                continue;
+            }
+
+            $resolved = self::resolveRowDimensions($db, $legacy, $idx + 1);
+            $errors   = array_merge($errors, $resolved['errors']);
+            $warnings = array_merge($warnings, $resolved['warnings']);
+            if ($resolved['target'] !== null) {
+                $targets[] = $resolved['target'];
+            }
+        }
+
+        return [
+            'expression' => TargetAstService::dnfToExpression($conjunctions),
+            'targets'    => $targets,
+            'errors'     => $errors,
+            'warnings'   => $warnings,
+        ];
+    }
+
+    /**
+     * Execute compound conjunction and return matching user IDs.
+     *
+     * @param list<array{dim: string, value: string}> $terms
+     * @return int[]
+     */
+    public static function resolveConjunctionUserIds(Database $db, array $terms): array
+    {
+        $built = self::buildConjunctionSql($db, $terms, 1);
+        if ($built['errors'] !== [] || $built['sql'] === null) {
+            return [];
+        }
+
+        $rows = $db->fetchAll($built['sql'], $built['params']);
+
+        return array_map('intval', array_column($rows, 'id'));
+    }
+
+    /**
+     * @param list<array{dim: string, value: string}> $terms
+     * @return array{sql: ?string, params: array, errors: string[]}
+     */
+    private static function buildConjunctionSql(Database $db, array $terms, int $rowNum): array
+    {
+        $errors = [];
+        $sql    = 'SELECT DISTINCT u.id FROM users u WHERE u.is_active = 1';
+        $params = [];
+
+        foreach ($terms as $term) {
+            $dim   = strtolower((string) ($term['dim'] ?? ''));
+            $value = trim((string) ($term['value'] ?? ''));
+            if ($value === '' || !in_array($dim, self::DIM_ORDER, true)) {
+                return ['sql' => null, 'params' => [], 'errors' => ["Row {$rowNum}: invalid conjunction term"]];
+            }
+
+            if ($dim === 'org') {
+                $org = $db->fetchOne(
+                    'SELECT id, slug FROM organizations WHERE slug = ? AND is_active = 1',
+                    [strtolower($value)]
+                );
+                if (!$org) {
+                    return ['sql' => null, 'params' => [], 'errors' => ["Row {$rowNum}: unknown org \"{$value}\""]];
+                }
+                $sql     .= ' AND u.home_org_id = ?';
+                $params[] = (int) $org['id'];
+            } elseif ($dim === 'node') {
+                $node = self::resolveNode($db, $value);
+                if ($node === null || isset($node['ambiguous'])) {
+                    return ['sql' => null, 'params' => [], 'errors' => ["Row {$rowNum}: unknown or ambiguous node \"{$value}\""]];
+                }
+                $nodeRow = $db->fetchOne('SELECT path FROM org_nodes WHERE id = ?', [(int) $node['id']]);
+                $sql     .= ' AND EXISTS (
+                    SELECT 1 FROM user_org_memberships m
+                    JOIN org_nodes n ON n.id = m.org_node_id
+                    WHERE m.user_id = u.id AND m.is_active = 1 AND n.path LIKE ?
+                )';
+                $params[] = $nodeRow['path'] . '%';
+            } elseif ($dim === 'tag') {
+                $tag = $db->fetchOne(
+                    'SELECT id FROM tags WHERE slug = ? AND is_active = 1',
+                    [strtolower($value)]
+                );
+                if (!$tag) {
+                    return ['sql' => null, 'params' => [], 'errors' => ["Row {$rowNum}: unknown tag \"{$value}\""]];
+                }
+                $sql     .= ' AND EXISTS (
+                    SELECT 1 FROM tag_assignments ta
+                    WHERE ta.user_id = u.id AND ta.tag_id = ? AND ta.is_active = 1
+                )';
+                $params[] = (int) $tag['id'];
+            } elseif ($dim === 'group') {
+                $group = self::resolveGroup($db, $value);
+                if ($group === null || isset($group['ambiguous'])) {
+                    return ['sql' => null, 'params' => [], 'errors' => ["Row {$rowNum}: unknown or ambiguous group \"{$value}\""]];
+                }
+                $groupUserIds = TagService::resolveGroupMembers($db, (int) $group['id']);
+                if ($groupUserIds === []) {
+                    $sql .= ' AND 1=0';
+                } else {
+                    [$placeholders, $params] = $db->inClause($groupUserIds, $params);
+                    $sql .= " AND u.id IN ({$placeholders})";
+                }
+            } elseif ($dim === 'user') {
+                $user = self::resolveUser($db, $value);
+                if (!$user) {
+                    return ['sql' => null, 'params' => [], 'errors' => ["Row {$rowNum}: unknown user \"{$value}\""]];
+                }
+                $sql     .= ' AND u.id = ?';
+                $params[] = (int) $user['id'];
+            }
+        }
+
+        return ['sql' => $sql, 'params' => $params, 'errors' => $errors];
+    }
+
+    /**
+     * Resolve compound AND terms (e.g. tag:a AND tag:b AND org:x).
+     *
+     * @param list<array{dim: string, value: string}> $terms
+     * @return array{target: ?array<string, mixed>, errors: string[]}
+     */
+    public static function resolveConjunctionTerms(Database $db, array $terms, int $rowNum): array
+    {
+        $built = self::buildConjunctionSql($db, $terms, $rowNum);
+        if ($built['errors'] !== []) {
+            return ['target' => null, 'errors' => $built['errors']];
+        }
+
+        $labels = [];
+        foreach ($terms as $term) {
+            $labels[] = ($term['dim'] ?? '') . ':' . ($term['value'] ?? '');
+        }
+
+        $target = [
+            'target_org_id'   => null,
+            'target_node_id'  => null,
+            'target_tag_id'   => null,
+            'target_group_id' => null,
+            'target_user_id'  => null,
+            'target_label'    => implode(' + ', $labels),
+            'conj_terms'      => $terms,
+        ];
+
+        return ['target' => $target, 'errors' => []];
+    }
+
+    /**
+     * @return array{rows: list<array<string, string>>, errors: string[]}
+     */
+    public static function parseLegacy(string $expression): array
     {
         $expression = trim($expression);
         if ($expression === '') {
@@ -112,10 +424,11 @@ class TargetExpressionService
     }
 
     /**
-     * @param list<array<string, mixed>> $structured  Builder rows from UI
+     * @param list<array<string, mixed>> $structured  Builder rows from UI (deprecated flat list)
      * @return list<array<string, string>>
+     * @deprecated Use structuredToRows() which also accepts target trees
      */
-    public static function structuredToRows(array $structured): array
+    public static function structuredToFlatRows(array $structured): array
     {
         $rows = [];
 
@@ -173,26 +486,65 @@ class TargetExpressionService
     }
 
     /**
-     * Full preview: parse optional expression or use rows, resolve users per OR term.
+     * Full preview: parse expression, builder tree, or legacy flat rows.
      *
-     * @param list<array<string, string>>|null $rows
+     * @param list<array<string, string>>|null $rows Legacy flat OR rows
+     * @param array<string, mixed>|null $tree Nested builder tree
      * @return array<string, mixed>
      */
-    public static function preview(Database $db, ?string $expression = null, ?array $rows = null): array
-    {
+    public static function preview(
+        Database $db,
+        ?string $expression = null,
+        ?array $rows = null,
+        ?array $tree = null
+    ): array {
         $parseErrors = [];
+        $compiled    = null;
+        $dnf         = null;
 
-        if ($rows === null) {
-            $parsed      = self::parse((string) $expression);
-            $rows        = $parsed['rows'];
-            $parseErrors = $parsed['errors'];
+        if ($tree !== null) {
+            $compiled = self::compileExpressionAst('', $tree);
+            $parseErrors = $compiled['errors'];
+            if ($parseErrors === [] && $compiled['ast'] !== null) {
+                $dnf = TargetAstService::astToDnf($compiled['ast']);
+                $parseErrors = $dnf['errors'];
+            }
+        } elseif ($rows === null) {
+            $compiled = self::compileExpressionAst((string) $expression);
+            $parseErrors = $compiled['errors'];
+            if ($parseErrors === [] && $compiled['ast'] !== null) {
+                $dnf = TargetAstService::astToDnf($compiled['ast']);
+                $parseErrors = $dnf['errors'];
+            }
+        } else {
+            $ast = TargetAstService::flatRowsToAst($rows);
+            $dnf = TargetAstService::astToDnf($ast);
+            $parseErrors = $dnf['errors'];
+            $compiled = [
+                'expression' => TargetAstService::dnfToExpression($dnf['conjunctions']),
+                'ast'        => $ast,
+            ];
         }
 
         if ($parseErrors !== []) {
             return [
                 'valid'      => false,
-                'expression' => trim((string) $expression),
+                'expression' => trim((string) ($compiled['expression'] ?? $expression)),
                 'errors'     => $parseErrors,
+                'warnings'   => [],
+                'targets'    => [],
+                'users'      => [],
+                'counts'     => ['total_unique' => 0, 'sms_eligible' => 0, 'row_totals' => []],
+                'ast'        => $compiled['ast'] ?? null,
+            ];
+        }
+
+        $conjunctions = $dnf['conjunctions'] ?? [];
+        if ($conjunctions === []) {
+            return [
+                'valid'      => false,
+                'expression' => trim((string) ($compiled['expression'] ?? $expression)),
+                'errors'     => ['No valid targeting terms found'],
                 'warnings'   => [],
                 'targets'    => [],
                 'users'      => [],
@@ -200,7 +552,7 @@ class TargetExpressionService
             ];
         }
 
-        $converted = self::rowsToAlertTargets($db, $rows);
+        $converted = self::dnfToAlertTargets($db, $conjunctions);
         if ($converted['errors'] !== []) {
             return [
                 'valid'      => false,
@@ -263,7 +615,7 @@ class TargetExpressionService
         }
         unset($user);
 
-        $canonical = self::canonicalizeFromTargets($targets);
+        $canonical = $converted['expression'];
 
         return [
             'valid'      => true,
@@ -277,6 +629,8 @@ class TargetExpressionService
                 'sms_eligible' => $smsEligible,
                 'row_totals'   => $rowTotals,
             ],
+            'ast'        => $compiled['ast'] ?? null,
+            'target_tree' => $tree,
             'rest_api'   => [
                 'method' => 'POST',
                 'path'   => '/api/v1/alert',
