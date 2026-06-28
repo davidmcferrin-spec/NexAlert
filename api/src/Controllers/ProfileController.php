@@ -24,9 +24,9 @@ use NexAlert\Api\Response;
 use NexAlert\Config\Database;
 use NexAlert\Config\Env;
 use NexAlert\Services\AuditService;
-use NexAlert\Services\JobQueueService;
 use NexAlert\Services\MailService;
 use NexAlert\Services\RowNormalizer;
+use NexAlert\Services\SmsConsentService;
 
 class ProfileController
 {
@@ -124,11 +124,7 @@ class ProfileController
         }
 
         if ($channel === 'sms') {
-            $db->execute(
-                'INSERT INTO user_sms_consent (user_id, contact_id, phone_e164, status, initiated_by)
-                 VALUES (?, ?, ?, \'pending\', ?)',
-                [$userId, $contactId, $value, $userId]
-            );
+            SmsConsentService::ensureConsentRecord($db, $userId, $contactId, $value, $userId);
         }
 
         AuditService::log('profile.contact_added', 'user_contact', (string) $contactId, [
@@ -195,7 +191,7 @@ class ProfileController
         $contactId = (int) $request->input('contact_id', 0);
 
         $contact = $db->fetchOne(
-            'SELECT c.id, c.contact_value, c.is_verified
+            'SELECT c.id, c.contact_value
              FROM user_contacts c
              WHERE c.id = ? AND c.user_id = ? AND c.channel = \'sms\' AND c.is_active = 1',
             [$contactId, $userId]
@@ -206,7 +202,7 @@ class ProfileController
         }
 
         $consent = $db->fetchOne(
-            'SELECT id, status FROM user_sms_consent WHERE contact_id = ?',
+            'SELECT status FROM user_sms_consent WHERE contact_id = ?',
             [$contactId]
         );
 
@@ -214,35 +210,13 @@ class ProfileController
             Response::error('SMS already confirmed for this number', 409);
         }
 
-        if (!$consent) {
-            $db->execute(
-                'INSERT INTO user_sms_consent (user_id, contact_id, phone_e164, status, initiated_by)
-                 VALUES (?, ?, ?, \'pending\', ?)',
-                [$userId, $contactId, $contact['contact_value'], $userId]
-            );
-        } elseif ($consent['status'] === 'stopped') {
+        if ($consent && $consent['status'] === 'stopped') {
             Response::error('Number opted out via STOP — contact admin to re-enroll', 409);
         }
 
-        $email = $db->fetchValue(
-            'SELECT contact_value FROM user_contacts
-             WHERE user_id = ? AND channel = \'email\' AND is_primary = 1 AND is_verified = 1 AND is_active = 1
-             LIMIT 1',
-            [$userId]
-        );
+        SmsConsentService::initiateOptIn($db, $userId, $contactId, $userId);
 
-        if ($email) {
-            MailService::sendSmsOptInNotice($email, $contact['contact_value']);
-            $db->execute(
-                'UPDATE user_sms_consent SET status = \'invite_sent\', invite_sent_at = NOW(), invite_count = invite_count + 1
-                 WHERE contact_id = ?',
-                [$contactId]
-            );
-        }
-
-        JobQueueService::push('sms_optin', ['contact_id' => $contactId, 'user_id' => $userId]);
-
-        Response::success(null, 'SMS opt-in request queued');
+        Response::success(null, 'SMS opt-in request queued — check your phone for a YES reply prompt');
     }
 
     public static function getNotificationPrefs(Request $request): never

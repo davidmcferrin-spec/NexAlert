@@ -11,6 +11,7 @@ namespace NexAlert\Services;
 use NexAlert\Api\Request;
 use NexAlert\Api\Response;
 use NexAlert\Config\Database;
+use NexAlert\Config\Env;
 
 class AlertService
 {
@@ -111,28 +112,34 @@ class AlertService
             ? json_encode(array_values($pollOptions), JSON_THROW_ON_ERROR)
             : null;
 
+        $sendAtParsed = self::parseSendAt($request->input('send_at'));
+        $isScheduled  = $sendAtParsed !== null && $sendAtParsed['is_future'];
+        $alertStatus  = $isScheduled ? 'scheduled' : 'sending';
+
         $alertId = $db->transaction(function (Database $db) use (
             $orgId, $createdByUser, $createdByToken, $alertType, $severity,
             $subject, $body, $bodyHtml, $channelsStr, $ttlMinutes, $expiresAt,
             $ackRequired, $ackDeadline, $escalationUserId, $pollQuestion, $pollOptionsJson,
-            $externalRef, $targetRows, $userIds, $channels
+            $externalRef, $targetRows, $userIds, $channels, $sendAtParsed, $alertStatus
         ): int {
+            $sendAtDb = $sendAtParsed['utc'] ?? null;
+
             $db->execute(
                 'INSERT INTO alerts (
                     created_by_user, created_by_token, org_id,
                     alert_type, severity, subject, body, body_html, channels,
-                    ttl_minutes, expires_at,
+                    send_at, ttl_minutes, expires_at,
                     ack_required, ack_deadline_minutes, escalation_user_id,
                     poll_question, poll_options,
-                    status, external_ref, sent_at
-                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, \'sending\', ?, NOW())',
+                    status, external_ref
+                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
                 [
                     $createdByUser, $createdByToken, $orgId,
                     $alertType, $severity, $subject, $body, $bodyHtml, $channelsStr,
-                    $ttlMinutes ?: null, $expiresAt,
+                    $sendAtDb, $ttlMinutes ?: null, $expiresAt,
                     $ackRequired ? 1 : 0, $ackDeadline, $escalationUserId,
                     $pollQuestion, $pollOptionsJson,
-                    $externalRef,
+                    $alertStatus, $externalRef,
                 ]
             );
             $alertId = $db->lastInsertId();
@@ -178,9 +185,64 @@ class AlertService
             return $alertId;
         });
 
-        JobQueueService::pushAlertDispatch($alertId);
+        if ($isScheduled && $sendAtParsed !== null) {
+            JobQueueService::pushAlertDispatchAt($alertId, $sendAtParsed['utc']);
+        } else {
+            JobQueueService::pushAlertDispatch($alertId);
+        }
 
-        return self::fetchAlertSummary($db, $alertId, count($userIds));
+        $summary = self::fetchAlertSummary($db, $alertId, count($userIds));
+        $summary['scheduled'] = $isScheduled;
+        if ($sendAtParsed !== null) {
+            $summary['send_at'] = $sendAtParsed['utc'];
+        }
+
+        return $summary;
+    }
+
+    /**
+     * Parse send_at from API (ISO local datetime or Y-m-d H:i:s). Returns null if empty/immediate past.
+     *
+     * @return array{utc: string, is_future: bool}|null
+     */
+    private static function parseSendAt(mixed $raw): ?array
+    {
+        if ($raw === null) {
+            return null;
+        }
+        $text = trim((string) $raw);
+        if ($text === '') {
+            return null;
+        }
+
+        $tzName = Env::get('APP_TIMEZONE', 'America/Chicago');
+        try {
+            $tz = new \DateTimeZone($tzName);
+        } catch (\Throwable) {
+            $tz = new \DateTimeZone('UTC');
+        }
+
+        $local = \DateTimeImmutable::createFromFormat('Y-m-d\TH:i', $text, $tz)
+            ?: \DateTimeImmutable::createFromFormat('Y-m-d H:i:s', $text, $tz)
+            ?: \DateTimeImmutable::createFromFormat('Y-m-d H:i', $text, $tz);
+
+        if ($local === false) {
+            try {
+                $local = new \DateTimeImmutable($text, $tz);
+            } catch (\Throwable) {
+                Response::validationError(['send_at' => 'Invalid datetime format']);
+            }
+        }
+
+        $utc    = $local->setTimezone(new \DateTimeZone('UTC'));
+        $utcStr = $utc->format('Y-m-d H:i:s');
+        $isFuture = $utc->getTimestamp() > time() + 30;
+
+        if (!$isFuture) {
+            return null;
+        }
+
+        return ['utc' => $utcStr, 'is_future' => true];
     }
 
     /**
@@ -534,9 +596,12 @@ class AlertService
             'body'             => $alert['body'],
             'channels'         => explode(',', (string) $alert['channels']),
             'status'           => $alert['status'],
+            'send_at'          => $alert['send_at'],
             'external_ref'     => $alert['external_ref'],
             'created_at'       => $alert['created_at'],
             'sent_at'          => $alert['sent_at'],
+            'ack_deadline_at'  => $alert['ack_deadline_at'] ?? null,
+            'escalated_at'     => $alert['escalated_at'] ?? null,
             'created_by_name'  => $alert['created_by_name'] ?? $alert['created_by_token_name'],
             'recipient_count'  => $recipientCount,
             'delivery_stats'   => $deliveryStats,

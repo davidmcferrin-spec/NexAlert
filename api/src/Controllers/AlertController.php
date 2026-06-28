@@ -28,7 +28,10 @@ class AlertController
     public static function create(Request $request): never
     {
         $result = AlertService::create($request);
-        Response::success($result, 'Alert queued for delivery', 201);
+        $msg    = !empty($result['scheduled'])
+            ? 'Alert scheduled for delivery'
+            : 'Alert queued for delivery';
+        Response::success($result, $msg, 201);
     }
 
     public static function list(Request $request): never
@@ -81,7 +84,7 @@ class AlertController
 
         $rows = $db->fetchAll(
             "SELECT a.id, a.org_id, a.alert_type, a.severity, a.subject, a.status,
-                    a.channels, a.external_ref, a.created_at, a.sent_at,
+                    a.channels, a.external_ref, a.created_at, a.sent_at, a.send_at,
                     o.display_name AS org_name,
                     u.display_name AS created_by_name,
                     st.name AS created_by_token_name,

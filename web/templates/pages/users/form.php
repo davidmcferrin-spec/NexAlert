@@ -99,9 +99,30 @@ if ($isEdit) {
                               bg-white dark:bg-gray-800 text-gray-900 dark:text-white
                               focus:outline-none focus:ring-2 focus:ring-red-500">
                 <?php if ($isEdit): ?>
-                <p class="text-xs text-gray-400 mt-1">Manage contact info from the Contacts tab below.</p>
+                <p class="text-xs text-gray-400 mt-1">Manage contact info in the Contacts panel below.</p>
                 <?php endif; ?>
             </div>
+
+            <?php if (!$isEdit): ?>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                        <?= tip_label('Mobile phone', 'E.164 or US 10-digit. Creates SMS contact for alert delivery.') ?>
+                    </label>
+                    <input type="tel" name="phone" placeholder="+1 555 123 4567"
+                           class="w-full px-3 py-2 text-sm rounded-xl border border-gray-300 dark:border-gray-700
+                                  bg-white dark:bg-gray-800 text-gray-900 dark:text-white
+                                  focus:outline-none focus:ring-2 focus:ring-red-500">
+                </div>
+                <div class="flex items-end pb-2">
+                    <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300"
+                           <?= tip_attr('Sends pre-notification email (if provided) and Twilio YES/STOP opt-in SMS', 'bottom') ?>>
+                        <input type="checkbox" name="send_sms_optin" value="1" checked class="rounded border-gray-300">
+                        Send SMS opt-in when phone added
+                    </label>
+                </div>
+            </div>
+            <?php endif; ?>
 
             <div class="grid grid-cols-2 gap-5">
                 <div>
@@ -168,6 +189,41 @@ if ($isEdit) {
     </div>
 
     <?php if ($isEdit && $user): ?>
+    <!-- Contacts panel -->
+    <div class="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 overflow-hidden mb-6"
+         x-data="contactsPanel(<?= $userId ?>)"
+         x-init="contacts = <?= htmlspecialchars(json_encode($user['contacts'] ?? [], JSON_THROW_ON_ERROR), ENT_QUOTES, 'UTF-8') ?>">
+        <div class="px-5 py-4 border-b border-gray-100 dark:border-gray-800">
+            <h3 class="text-sm font-semibold text-gray-900 dark:text-white">
+                <?= tip_label('Contacts & SMS consent', 'SMS alerts require confirmed opt-in (YES reply to Twilio).') ?>
+            </h3>
+        </div>
+        <div class="divide-y divide-gray-100 dark:divide-gray-800">
+            <template x-for="c in contacts" :key="c.id">
+                <div class="flex items-center justify-between px-5 py-3 gap-3">
+                    <div>
+                        <span class="text-xs uppercase text-gray-400" x-text="c.channel"></span>
+                        <div class="text-sm font-mono" x-text="c.contact_value"></div>
+                        <div class="text-xs mt-0.5">
+                            <span x-show="c.is_verified == 1" class="text-green-600">Email verified</span>
+                            <span x-show="c.channel === 'sms' && c.sms_consent_status"
+                                  class="capitalize"
+                                  :class="c.sms_consent_status === 'confirmed' ? 'text-green-600' : 'text-amber-600'"
+                                  x-text="'SMS: ' + (c.sms_consent_status || 'pending')"></span>
+                        </div>
+                    </div>
+                    <button x-show="c.channel === 'sms' && c.sms_consent_status !== 'confirmed'"
+                            @click="resendSmsOptIn(c)"
+                            :disabled="optInSending === c.id"
+                            class="text-xs font-semibold text-green-600 hover:text-green-700 disabled:opacity-50">
+                        <span x-text="optInSending === c.id ? 'Sending…' : 'Send opt-in'"></span>
+                    </button>
+                </div>
+            </template>
+            <div x-show="!contacts.length" class="px-5 py-4 text-sm text-gray-400">No contacts on file.</div>
+        </div>
+    </div>
+
     <!-- Memberships panel -->
     <div class="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 overflow-hidden mb-6"
          x-data="membershipsPanel(<?= $userId ?>)" x-init="load()">
@@ -655,6 +711,24 @@ function tagsPanel(userId) {
             const res = await api.delete(`/users/${userId}/tags/${t.tag_id}`);
             if (res.ok) { toast('Tag removed'); await this.load(); }
             else toast(res.data.error || 'Failed', 'error');
+        }
+    };
+}
+
+function contactsPanel(userId) {
+    return {
+        contacts: [],
+        optInSending: null,
+        async resendSmsOptIn(c) {
+            this.optInSending = c.id;
+            const res = await api.post(`/users/${userId}/sms-optin`, { contact_id: c.id });
+            this.optInSending = null;
+            if (res.ok) {
+                toast('SMS opt-in queued — user should reply YES to the text');
+                c.sms_consent_status = 'invite_sent';
+            } else {
+                toast(res.data?.error || 'Failed to queue opt-in', 'error');
+            }
         }
     };
 }

@@ -12,6 +12,10 @@ if (!$isEdit) {
     $body['home_org_id'] = (int) ($_POST['home_org_id'] ?? 0);
     if (!empty($_POST['home_node_id'])) $body['home_node_id'] = (int) $_POST['home_node_id'];
     if (!empty($_POST['email']))        $body['email']        = trim($_POST['email']);
+    if (!empty($_POST['phone']))        $body['phone']        = trim($_POST['phone']);
+    if (empty($_POST['send_sms_optin'])) {
+        $body['send_sms_optin'] = false;
+    }
     if (!empty($_POST['password']))     $body['password']     = $_POST['password'];
 } else {
     if (!empty($_POST['home_node_id'])) $body['home_node_id'] = (int) $_POST['home_node_id'];

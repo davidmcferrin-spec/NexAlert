@@ -66,4 +66,20 @@ class JobQueueService
     {
         return self::pushDelayed('ack_escalate', ['alert_id' => $alertId], $delaySeconds);
     }
+
+    public static function pushAlertDispatchAt(int $alertId, string $utcDatetime): int
+    {
+        $db = Database::getInstance();
+        $db->execute(
+            'INSERT INTO jobs (queue, payload, status, available_at)
+             VALUES (?, ?, \'pending\', ?)',
+            [
+                self::QUEUE_DISPATCH,
+                json_encode(['type' => 'dispatch_alert', 'data' => ['alert_id' => $alertId]], JSON_THROW_ON_ERROR),
+                $utcDatetime,
+            ]
+        );
+
+        return $db->lastInsertId();
+    }
 }

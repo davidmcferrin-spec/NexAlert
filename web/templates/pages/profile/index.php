@@ -108,14 +108,25 @@ $severities = ['test', 'info', 'notice', 'warning', 'critical', 'evacuation'];
                         <div class="text-sm font-mono" x-text="c.contact_value"></div>
                         <div class="text-xs text-gray-400 mt-0.5">
                             <span x-show="c.is_verified == 1" class="text-green-600">Verified</span>
-                            <span x-show="c.channel === 'sms' && c.sms_consent_status" x-text="'SMS: ' + c.sms_consent_status"></span>
+                            <span x-show="c.channel === 'sms' && c.sms_consent_status"
+                                  class="capitalize"
+                                  :class="{
+                                      'text-green-600': c.sms_consent_status === 'confirmed',
+                                      'text-amber-600': ['pending','invite_sent','opt_in_sent'].includes(c.sms_consent_status),
+                                      'text-red-600': ['stopped','denied'].includes(c.sms_consent_status)
+                                  }"
+                                  x-text="'SMS: ' + smsConsentLabel(c.sms_consent_status)"></span>
                         </div>
                     </div>
                     <div class="flex gap-2">
                         <button x-show="c.channel === 'email' && c.is_verified != 1" @click="resendVerify(c)"
                                 class="text-xs text-blue-600">Resend verify</button>
-                        <button x-show="c.channel === 'sms' && c.sms_consent_status !== 'confirmed'" @click="smsOptIn(c)"
-                                class="text-xs text-green-600">SMS opt-in</button>
+                        <button x-show="c.channel === 'sms' && c.sms_consent_status !== 'confirmed' && c.sms_consent_status !== 'stopped'"
+                                @click="smsOptIn(c)"
+                                class="text-xs text-green-600"
+                                :title="c.sms_consent_status === 'opt_in_sent' ? 'Reply YES to the text message to confirm' : 'Send Twilio opt-in SMS'">
+                            <span x-text="c.sms_consent_status === 'opt_in_sent' ? 'Resend opt-in' : 'Request SMS opt-in'"></span>
+                        </button>
                         <button @click="removeContact(c)" class="text-xs text-red-500">Remove</button>
                     </div>
                 </li>
@@ -181,6 +192,18 @@ function profilePage() {
                 warning: 'bg-yellow-100 text-yellow-700', critical: 'bg-orange-100 text-orange-700',
                 evacuation: 'bg-red-100 text-red-700', notice: 'bg-indigo-100 text-indigo-700' };
             return m[s] || 'bg-gray-100 text-gray-600';
+        },
+        smsConsentLabel(status) {
+            const labels = {
+                pending: 'pending — request opt-in',
+                invite_sent: 'invite email sent',
+                opt_in_sent: 'awaiting YES reply',
+                confirmed: 'confirmed',
+                denied: 'declined',
+                stopped: 'STOP — unsubscribed',
+                expired: 'expired',
+            };
+            return labels[status] || status;
         },
         formatDate(iso) {
             if (!iso) return '';
@@ -255,7 +278,12 @@ function profilePage() {
         },
         async smsOptIn(c) {
             const res = await api.post('/profile/sms-optin', { contact_id: c.id });
-            toast(res.ok ? 'Opt-in queued' : (res.data?.error || 'Failed'), res.ok ? 'success' : 'error');
+            if (res.ok) {
+                toast('Opt-in SMS queued — reply YES to confirm subscription');
+                await this.reloadProfile();
+            } else {
+                toast(res.data?.error || 'Failed', 'error');
+            }
         },
         async ackAlert(a) {
             const res = await api.post('/alerts/' + a.id + '/ack', {});

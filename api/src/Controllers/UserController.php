@@ -30,6 +30,7 @@ use NexAlert\Config\Env;
 use NexAlert\Services\AuditService;
 use NexAlert\Services\PermissionService;
 use NexAlert\Services\RowNormalizer;
+use NexAlert\Services\SmsConsentService;
 use NexAlert\Services\TagService;
 
 class UserController
@@ -190,7 +191,11 @@ class UserController
             // Add primary phone if provided
             $phone = trim((string) $request->input('phone', ''));
             if ($phone !== '') {
-                self::addContact($db, $userId, 'sms', self::normalizePhone($phone), 'Mobile', true);
+                $contactId = self::addContact($db, $userId, 'sms', self::normalizePhone($phone), 'Mobile', true);
+                $skipOptIn = in_array($request->input('send_sms_optin'), [false, 0, '0', 'false'], true);
+                if (!$skipOptIn) {
+                    SmsConsentService::initiateOptIn($db, $userId, $contactId, (int) $request->user['uid']);
+                }
             }
 
             // Assign recipient role by default
@@ -230,6 +235,47 @@ class UserController
         }
 
         Response::success($user);
+    }
+
+    /**
+     * POST /api/v1/users/{id}/sms-optin
+     * Body: { "contact_id": 123 }
+     */
+    public static function requestSmsOptIn(Request $request): never
+    {
+        $id        = (int) $request->param('id');
+        $contactId = (int) $request->input('contact_id', 0);
+        $db        = Database::getInstance();
+
+        self::assertUserAccess($request, $id, $db);
+
+        if ($contactId <= 0) {
+            Response::validationError(['contact_id' => 'Required']);
+        }
+
+        $contact = $db->fetchOne(
+            'SELECT id FROM user_contacts
+             WHERE id = ? AND user_id = ? AND channel = \'sms\' AND is_active = 1',
+            [$contactId, $id]
+        );
+        if (!$contact) {
+            Response::notFound('SMS contact not found');
+        }
+
+        $consent = $db->fetchOne(
+            'SELECT status FROM user_sms_consent WHERE contact_id = ?',
+            [$contactId]
+        );
+        if ($consent && $consent['status'] === 'confirmed') {
+            Response::error('SMS already confirmed for this number', 409);
+        }
+        if ($consent && $consent['status'] === 'stopped') {
+            Response::error('Number opted out via STOP — cannot re-enroll automatically', 409);
+        }
+
+        SmsConsentService::initiateOptIn($db, $id, $contactId, (int) $request->user['uid']);
+
+        Response::success(null, 'SMS opt-in request queued');
     }
 
     /**
@@ -419,8 +465,9 @@ class UserController
                 $passwordHash = password_hash($tempPassword, PASSWORD_BCRYPT, ['cost' => $cost]);
                 $displayName  = trim(($data['first_name'] ?? '') . ' ' . ($data['last_name'] ?? ''));
 
+                $smsContactId = null;
                 $userId = $db->transaction(function (Database $db) use (
-                    $data, $displayName, $orgId, $nodeId, $passwordHash, $request
+                    $data, $displayName, $orgId, $nodeId, $passwordHash, $request, &$smsContactId
                 ): int {
                     $db->execute(
                         'INSERT INTO users
@@ -437,8 +484,16 @@ class UserController
 
                     self::addContact($db, $userId, 'email', $data['email'], 'Work', true);
 
+                    $smsContactId = null;
                     if (!empty($data['phone'])) {
-                        self::addContact($db, $userId, 'sms', self::normalizePhone($data['phone']), 'Mobile', true);
+                        $smsContactId = self::addContact(
+                            $db,
+                            $userId,
+                            'sms',
+                            self::normalizePhone($data['phone']),
+                            'Mobile',
+                            true
+                        );
                     }
 
                     if ($nodeId) {
@@ -465,6 +520,10 @@ class UserController
 
                     return $userId;
                 });
+
+                if ($smsContactId !== null && $smsContactId > 0) {
+                    SmsConsentService::initiateOptIn($db, $userId, $smsContactId, (int) $request->user['uid']);
+                }
 
                 $results['created']++;
             } catch (\Throwable $e) {
@@ -934,8 +993,12 @@ class UserController
         }
 
         $user['contacts'] = $db->fetchAll(
-            'SELECT id, channel, contact_value, label, is_primary, is_verified, verified_at, is_active
-             FROM user_contacts WHERE user_id = ? ORDER BY channel, is_primary DESC',
+            'SELECT c.id, c.channel, c.contact_value, c.label, c.is_primary, c.is_verified, c.verified_at, c.is_active,
+                    sc.status AS sms_consent_status
+             FROM user_contacts c
+             LEFT JOIN user_sms_consent sc ON sc.contact_id = c.id
+             WHERE c.user_id = ? AND c.is_active = 1
+             ORDER BY c.channel, c.is_primary DESC',
             [$id]
         );
 
@@ -975,12 +1038,20 @@ class UserController
         string $value,
         string $label,
         bool $isPrimary
-    ): void {
+    ): int {
         $db->execute(
             'INSERT INTO user_contacts (user_id, channel, contact_value, label, is_primary)
              VALUES (?, ?, ?, ?, ?)',
             [$userId, $channel, $value, $label, $isPrimary ? 1 : 0]
         );
+
+        $contactId = $db->lastInsertId();
+
+        if ($channel === 'sms') {
+            SmsConsentService::ensureConsentRecord($db, $userId, $contactId, $value, null);
+        }
+
+        return $contactId;
     }
 
     private static function extractUserFields(Request $request): array

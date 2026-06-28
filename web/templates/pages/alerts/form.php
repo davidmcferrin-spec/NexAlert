@@ -104,6 +104,16 @@ $pageSubtitle = 'Compose and dispatch a multi-channel alert';
                 </label>
             </div>
         </div>
+
+        <div class="border-t border-gray-100 dark:border-gray-800 pt-4">
+            <label class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                <input type="checkbox" x-model="scheduleEnabled" class="rounded border-gray-300">
+                <?= tip_label('Schedule for later', 'Hold delivery until the chosen date/time (your local timezone).') ?>
+            </label>
+            <input x-show="scheduleEnabled" type="datetime-local" x-model="form.send_at"
+                   :min="minScheduleAt"
+                   class="w-full max-w-xs px-3 py-2 text-sm rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800">
+        </div>
     </div>
 
     <div class="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 p-6 space-y-4">
@@ -168,8 +178,15 @@ function alertComposer() {
         pollOptionsText: 'Yes\nNo',
         preview: {},
         sending: false,
+        scheduleEnabled: false,
+        minScheduleAt: '',
 
         async init() {
+            const pad = n => String(n).padStart(2, '0');
+            const now = new Date();
+            now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+            this.minScheduleAt = now.toISOString().slice(0, 16);
+
             const savedExpr = sessionStorage.getItem('nexalert_target_expression');
             const savedTree = sessionStorage.getItem('nexalert_target_tree');
             if (savedExpr) {
@@ -241,12 +258,16 @@ function alertComposer() {
                     body.escalation_user_id = this.form.escalation_user_id;
                 }
             }
+            if (this.scheduleEnabled && this.form.send_at) {
+                body.send_at = this.form.send_at;
+            }
 
             const res = await api.post('/alerts', body);
             this.sending = false;
 
             if (res.ok) {
-                toast('Alert queued — ' + (res.data.data.recipient_count || '?') + ' recipients');
+                const msg = res.data.data?.scheduled ? 'Alert scheduled' : 'Alert queued';
+                toast(msg + ' — ' + (res.data.data.recipient_count || '?') + ' recipients');
                 window.location.href = '/admin/alerts/history';
             } else {
                 const err = res.data?.error || res.data?.errors?.targets || 'Send failed';

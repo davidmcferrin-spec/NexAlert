@@ -84,6 +84,7 @@ return function (Router $router): void {
         $r->get('/{id:\d+}',     [UserController::class, 'get'],    [AuthMiddleware::required()]);
         $r->put('/{id:\d+}',     [UserController::class, 'update'], [AuthMiddleware::required()]);
         $r->delete('/{id:\d+}',  [UserController::class, 'delete'], [AuthMiddleware::withPermission('user.manage')]);
+        $r->post('/{id:\d+}/sms-optin', [UserController::class, 'requestSmsOptIn'], [AuthMiddleware::withPermission('user.manage')]);
 
         // Memberships
         $r->get('/{id:\d+}/memberships',           [UserController::class, 'listMemberships'],  [AuthMiddleware::required()]);

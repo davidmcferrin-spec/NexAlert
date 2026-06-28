@@ -213,6 +213,18 @@ def process_dispatch_alert(conn, alert_id: int):
         if not alert:
             raise RuntimeError(f"Alert {alert_id} not found")
 
+        if alert.get("status") == "scheduled":
+            cur.execute(
+                "UPDATE alerts SET status = 'sending' WHERE id = %s AND status = 'scheduled'",
+                (alert_id,),
+            )
+            conn.commit()
+            alert["status"] = "sending"
+
+        if alert.get("status") == "cancelled":
+            log.info("Alert %s cancelled — skipping dispatch", alert_id)
+            return
+
         if alert.get("poll_options") and isinstance(alert["poll_options"], str):
             try:
                 alert["poll_options"] = json.loads(alert["poll_options"])
@@ -475,7 +487,7 @@ def process_sms_optin(conn, contact_id: int, user_id: int):
     with conn.cursor() as cur:
         cur.execute(
             """
-            SELECT c.contact_value, sc.id AS consent_id, sc.status
+            SELECT c.contact_value, sc.id AS consent_id, sc.status, sc.opt_in_sent_at
             FROM user_contacts c
             JOIN user_sms_consent sc ON sc.contact_id = c.id
             WHERE c.id = %s AND c.user_id = %s AND c.channel = 'sms'
@@ -487,6 +499,15 @@ def process_sms_optin(conn, contact_id: int, user_id: int):
             return
         if row["status"] == "confirmed":
             return
+        if row["status"] == "opt_in_sent" and row.get("opt_in_sent_at"):
+            cur.execute(
+                "SELECT TIMESTAMPDIFF(MINUTE, %s, UTC_TIMESTAMP()) AS mins",
+                (row["opt_in_sent_at"],),
+            )
+            age = cur.fetchone()
+            if age and int(age.get("mins") or 999) < 5:
+                log.info("SMS opt-in for contact %s sent recently — skipping duplicate", contact_id)
+                return
 
     msg = (
         f"{env('APP_NAME', 'NexAlert')}: Reply YES to receive emergency SMS alerts. "
@@ -505,6 +526,53 @@ def process_sms_optin(conn, contact_id: int, user_id: int):
         )
         conn.commit()
     log.info("SMS opt-in sent to contact %s", contact_id)
+
+
+def release_due_scheduled_alerts(conn) -> int:
+    """Safety net: enqueue dispatch for scheduled alerts past send_at."""
+    released = 0
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT id FROM alerts
+            WHERE status = 'scheduled'
+              AND send_at IS NOT NULL
+              AND send_at <= UTC_TIMESTAMP()
+            ORDER BY send_at ASC
+            LIMIT 5
+            """
+        )
+        rows = cur.fetchall()
+        for row in rows:
+            alert_id = int(row["id"])
+            cur.execute(
+                """
+                SELECT COUNT(*) AS c FROM jobs
+                WHERE queue = 'dispatch' AND status IN ('pending', 'processing')
+                  AND JSON_UNQUOTE(JSON_EXTRACT(payload, '$.type')) = 'dispatch_alert'
+                  AND CAST(JSON_UNQUOTE(JSON_EXTRACT(payload, '$.data.alert_id')) AS UNSIGNED) = %s
+                """,
+                (alert_id,),
+            )
+            pending = cur.fetchone()
+            if pending and int(pending["c"] or 0) > 0:
+                continue
+            cur.execute(
+                "UPDATE alerts SET status = 'sending' WHERE id = %s AND status = 'scheduled'",
+                (alert_id,),
+            )
+            cur.execute(
+                """
+                INSERT INTO jobs (queue, payload, status, available_at)
+                VALUES ('dispatch', %s, 'pending', UTC_TIMESTAMP())
+                """,
+                (json.dumps({"type": "dispatch_alert", "data": {"alert_id": alert_id}}),),
+            )
+            released += 1
+        conn.commit()
+    if released:
+        log.info("Released %s due scheduled alert(s) for dispatch", released)
+    return released
 
 
 def process_job(conn, job: dict):
@@ -535,6 +603,8 @@ def main():
                 except Exception as exc:
                     log.exception("Job %s failed", job["id"])
                     finish_job(conn, job["id"], False, str(exc))
+            else:
+                release_due_scheduled_alerts(conn)
             conn.close()
         except Exception as exc:
             log.exception("Worker loop error: %s", exc)
