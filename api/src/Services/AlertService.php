@@ -576,6 +576,10 @@ class AlertService
             return 'contact_unverified';
         }
 
+        if ($channel === 'email' && !self::isDeliverableEmail((string) ($contact['contact_value'] ?? ''))) {
+            return 'invalid_email_address';
+        }
+
         if ($channel === 'sms') {
             $consent = $db->fetchValue(
                 "SELECT status FROM user_sms_consent
@@ -588,6 +592,20 @@ class AlertService
         }
 
         return null;
+    }
+
+    private static function isDeliverableEmail(string $addr): bool
+    {
+        $addr = trim($addr);
+        if ($addr === '' || !filter_var($addr, FILTER_VALIDATE_EMAIL)) {
+            return false;
+        }
+
+        $domain = strtolower((string) substr(strrchr($addr, '@'), 1));
+
+        return $domain !== ''
+            && str_contains($domain, '.')
+            && !in_array($domain, ['localhost', 'local', 'test', 'invalid'], true);
     }
 
     /**

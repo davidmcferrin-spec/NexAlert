@@ -24,6 +24,7 @@ from html import escape
 from pathlib import Path
 import hashlib
 import hmac
+import re
 from urllib.parse import urlencode
 
 try:
@@ -63,6 +64,66 @@ if not ENV:
 
 def env(key: str, default: str = "") -> str:
     return os.environ.get(key) or ENV.get(key, default)
+
+
+FQDN_EMAIL = re.compile(r"^[^\s@]+@[^\s@]+\.[^\s@]+$")
+INVALID_EMAIL_DOMAINS = frozenset({"localhost", "local", "test", "invalid"})
+
+
+def is_deliverable_email(addr: str) -> bool:
+    addr = (addr or "").strip()
+    if not addr or not FQDN_EMAIL.match(addr):
+        return False
+    domain = addr.rsplit("@", 1)[1].lower()
+    return domain not in INVALID_EMAIL_DOMAINS
+
+
+def normalize_vapid_subject(raw: str) -> str:
+    subject = (raw or "").strip()
+    if not subject:
+        from_addr = env("MAIL_FROM_ADDRESS", "").strip()
+        if from_addr and "@" in from_addr:
+            return f"mailto:{from_addr}"
+        return "mailto:nexalert@example.com"
+    if subject.startswith(("mailto:", "https://")):
+        return subject
+    if "@" in subject:
+        return f"mailto:{subject}"
+    return f"https://{subject.lstrip('/')}"
+
+
+def load_vapid_private_key() -> str:
+    """Return private key for pywebpush (base64url raw or PEM)."""
+    private_key = env("VAPID_PRIVATE_KEY", "").strip()
+    if not private_key:
+        raise RuntimeError("VAPID_PRIVATE_KEY not configured")
+    return private_key
+
+
+def validate_vapid_config() -> None:
+    private_key = env("VAPID_PRIVATE_KEY", "").strip()
+    public_key = env("VAPID_PUBLIC_KEY", "").strip()
+    if not private_key:
+        log.warning("VAPID_PRIVATE_KEY not set — push_web deliveries will fail")
+        return
+    try:
+        from py_vapid import Vapid02  # type: ignore
+
+        vapid = Vapid02.from_string(private_key=private_key)
+        derived = vapid.public_key
+        derived_pub = derived.decode() if isinstance(derived, bytes) else str(derived)
+        if public_key and derived_pub != public_key:
+            log.error(
+                "VAPID key mismatch: public key in .env does not match private key. "
+                "Regenerate with: php scripts/generate_vapid.php"
+            )
+            return
+        log.info("VAPID keys OK (subject=%s)", normalize_vapid_subject(env("VAPID_SUBJECT", "")))
+    except Exception as exc:
+        log.error(
+            "VAPID keys invalid (%s). Regenerate: php scripts/generate_vapid.php",
+            exc,
+        )
 
 
 def db_connect():
@@ -130,6 +191,9 @@ def finish_job(conn, job_id: int, ok: bool, error: str | None = None):
 
 
 def send_email(to_addr: str, subject: str, html: str, text: str):
+    if not is_deliverable_email(to_addr):
+        raise ValueError(f"Invalid email address (need FQDN): {to_addr}")
+
     host = env("MAIL_HOST")
     port = int(env("MAIL_PORT", "587"))
     user = env("MAIL_USERNAME")
@@ -261,10 +325,8 @@ def _webpush_send(
     except ImportError as exc:
         raise RuntimeError("Install pywebpush: pip install pywebpush") from exc
 
-    private_key = env("VAPID_PRIVATE_KEY", "")
-    vapid_subject = env("VAPID_SUBJECT", "mailto:nexalert@example.com")
-    if not private_key:
-        raise RuntimeError("VAPID_PRIVATE_KEY not configured")
+    private_key = load_vapid_private_key()
+    vapid_subject = normalize_vapid_subject(env("VAPID_SUBJECT", ""))
 
     payload = json.dumps({"title": title, "body": body[:180], "url": url})
     subscription = {
@@ -291,7 +353,7 @@ def _webpush_send(
         status = getattr(getattr(exc, "response", None), "status_code", None)
         if sub_id:
             with conn.cursor() as cur:
-                if status == 410:
+                if status in (400, 401, 403, 404, 410):
                     cur.execute(
                         "UPDATE push_subscriptions SET is_active = 0, failed_count = failed_count + 1 WHERE id = %s",
                         (sub_id,),
@@ -970,6 +1032,7 @@ def process_job(conn, job: dict):
 
 def main():
     log.info("NexAlert dispatch worker starting (poll=%ss)", POLL_SECONDS)
+    validate_vapid_config()
     while True:
         try:
             conn = db_connect()

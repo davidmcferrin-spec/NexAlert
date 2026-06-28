@@ -43,7 +43,7 @@ use NexAlert\Config\Logger;
 Env::load(NEXALERT_ROOT);
 Logger::init();
 
-$opts = getopt('', ['status', 'migrate-only', 'seed-only', 'reset-admin', 'force', 'help']);
+$opts = getopt('', ['status', 'migrate-only', 'seed-only', 'reset-admin', 'repair-admin-email', 'force', 'help']);
 
 if (isset($opts['help'])) {
     printHelp();
@@ -67,6 +67,12 @@ try {
 
     if (isset($opts['status'])) {
         showStatus($db);
+        exit(0);
+    }
+
+    if (isset($opts['repair-admin-email'])) {
+        upgradeAdminEmailContacts($db);
+        out('Done.');
         exit(0);
     }
 
@@ -389,6 +395,7 @@ function seedDevAdmin(Database $db, bool $resetAdmin): void
     $existingId = $db->fetchValue('SELECT id FROM users WHERE username = ?', [$username]);
 
     if ($existingId && !$resetAdmin) {
+        upgradeAdminEmailContacts($db);
         out('Admin user already exists (use --reset-admin to update password).');
         return;
     }
@@ -405,6 +412,8 @@ function seedDevAdmin(Database $db, bool $resetAdmin): void
                 [$hash, $existingId]
             );
             ensureSuperAdminRole($db, (int) $existingId, $orgId);
+            ensureAdminEmail($db, (int) $existingId);
+            upgradeAdminEmailContacts($db);
             out('  ✓ admin password reset');
             return;
         }
@@ -510,9 +519,78 @@ function ensureSuperAdminRole(Database $db, int $userId, int $orgId): void
     }
 }
 
+function isFqdnEmail(string $email): bool
+{
+    $email = trim($email);
+    if ($email === '' || !filter_var($email, FILTER_VALIDATE_EMAIL)) {
+        return false;
+    }
+
+    $domain = strtolower((string) substr(strrchr($email, '@'), 1));
+    if ($domain === '' || !str_contains($domain, '.')) {
+        return false;
+    }
+
+    return !in_array($domain, ['localhost', 'local', 'test', 'invalid'], true);
+}
+
+function resolveDevAdminEmail(): string
+{
+    $configured = trim(Env::get('DEV_ADMIN_EMAIL', ''));
+    if ($configured !== '' && isFqdnEmail($configured)) {
+        return $configured;
+    }
+
+    $from = trim(Env::get('MAIL_FROM_ADDRESS', ''));
+    if ($from !== '' && isFqdnEmail($from)) {
+        return $from;
+    }
+
+    $appUrl = trim(Env::get('APP_URL', ''));
+    if ($appUrl !== '') {
+        $host = parse_url($appUrl, PHP_URL_HOST);
+        if (is_string($host) && $host !== '' && str_contains($host, '.')) {
+            return 'admin@' . $host;
+        }
+    }
+
+    return $configured !== '' ? $configured : 'admin@localhost';
+}
+
+function upgradeAdminEmailContacts(Database $db): void
+{
+    $target = resolveDevAdminEmail();
+    if (!isFqdnEmail($target)) {
+        return;
+    }
+
+    $adminId = $db->fetchValue('SELECT id FROM users WHERE username = ?', ['admin']);
+    if (!$adminId) {
+        return;
+    }
+
+    $bad = $db->fetchAll(
+        "SELECT id, contact_value FROM user_contacts
+         WHERE user_id = ? AND channel = 'email' AND is_active = 1
+           AND (contact_value = 'admin@localhost'
+                OR contact_value NOT LIKE '%@%.%')",
+        [(int) $adminId]
+    );
+
+    foreach ($bad as $row) {
+        $db->execute(
+            'UPDATE user_contacts
+             SET contact_value = ?, is_verified = 1, verified_at = COALESCE(verified_at, NOW())
+             WHERE id = ?',
+            [$target, (int) $row['id']]
+        );
+        out('  ✓ admin email updated: ' . $row['contact_value'] . ' → ' . $target);
+    }
+}
+
 function ensureAdminEmail(Database $db, int $userId): void
 {
-    $email = Env::get('DEV_ADMIN_EMAIL', 'admin@localhost');
+    $email = resolveDevAdminEmail();
 
     $exists = $db->fetchValue(
         'SELECT id FROM user_contacts WHERE user_id = ? AND channel = ? AND contact_value = ?',
@@ -520,7 +598,12 @@ function ensureAdminEmail(Database $db, int $userId): void
     );
 
     if ($exists) {
+        upgradeAdminEmailContacts($db);
         return;
+    }
+
+    if (!isFqdnEmail($email)) {
+        out('  ⚠ admin email is not FQDN (' . $email . ') — set DEV_ADMIN_EMAIL or MAIL_FROM_ADDRESS');
     }
 
     $db->execute(
@@ -528,6 +611,8 @@ function ensureAdminEmail(Database $db, int $userId): void
          VALUES (?, ?, ?, ?, 1, 1, NOW())',
         [$userId, 'email', $email, 'Work']
     );
+
+    upgradeAdminEmailContacts($db);
 }
 
 // ---------------------------------------------------------------------------
@@ -550,13 +635,14 @@ Usage:
   php migrate.php --migrate-only  Apply SQL migrations only
   php migrate.php --seed-only     Seed dev org + admin only
   php migrate.php --reset-admin   Create or reset admin password
+  php migrate.php --repair-admin-email Fix admin@localhost → DEV_ADMIN_EMAIL / MAIL_FROM
   php migrate.php --force         Allow seed/migrate when APP_ENV=production
   php migrate.php --help          Show this help
 
 Environment (.env):
   DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASS  Required
   DEV_ADMIN_PASSWORD                           Default: YourStrongPassword
-  DEV_ADMIN_EMAIL                              Default: admin@localhost
+  DEV_ADMIN_EMAIL                              Default: MAIL_FROM_ADDRESS or admin@APP_URL host
   BCRYPT_COST                                  Default: 12
 
 Default admin credentials (development):
