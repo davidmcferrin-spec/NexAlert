@@ -51,6 +51,7 @@ class NodeController
 
         self::assertOrgAccess($request, $orgId);
         self::assertOrgExists($db, $orgId);
+        self::ensureOrgRootNode($db, $orgId);
 
         $asTree    = $request->query('tree') === '1';
         $activeOnly = $request->query('active', '1') !== '0';
@@ -431,6 +432,35 @@ class NodeController
         if (!$db->fetchValue('SELECT id FROM organizations WHERE id = ? AND is_active = 1', [$orgId])) {
             Response::notFound('Organization not found');
         }
+    }
+
+    /**
+     * Ensure every org has a root org_node (repairs legacy orgs created without one).
+     */
+    private static function ensureOrgRootNode(Database $db, int $orgId): void
+    {
+        if ($db->fetchValue(
+            "SELECT id FROM org_nodes WHERE org_id = ? AND node_type = 'org' AND is_active = 1",
+            [$orgId]
+        )) {
+            return;
+        }
+
+        $org = $db->fetchOne('SELECT id, name, slug FROM organizations WHERE id = ?', [$orgId]);
+        if (!$org) {
+            return;
+        }
+
+        $db->execute(
+            "INSERT INTO org_nodes (org_id, parent_id, node_type, name, slug, path, depth, is_active)
+             VALUES (?, NULL, 'org', ?, ?, ?, 0, 1)",
+            [$orgId, $org['name'], $org['slug'], "/{$orgId}/"]
+        );
+        $nodeId = $db->lastInsertId();
+        $db->execute(
+            'UPDATE org_nodes SET path = ? WHERE id = ?',
+            ["/{$orgId}/{$nodeId}/", $nodeId]
+        );
     }
 
     /**

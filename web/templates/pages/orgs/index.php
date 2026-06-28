@@ -87,8 +87,10 @@ $headerActions = '
                 <span class="text-gray-400 font-normal ml-1">— Org Tree</span>
             </h2>
             <button @click="openAddNode()"
+                    :disabled="nodesLoading || !selectedOrg"
                     class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold
-                           bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors">
+                           bg-red-600 hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed
+                           text-white rounded-lg transition-colors">
                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/>
                 </svg>
@@ -100,7 +102,7 @@ $headerActions = '
         <div class="p-5">
             <div x-show="nodesLoading" class="text-sm text-gray-400">Loading tree…</div>
             <div x-show="!nodesLoading && nodes.length === 0" class="text-sm text-gray-400">
-                No nodes yet. Add a root node to start building the org tree.
+                No nodes found. Click <strong>Add Node</strong> to create the first child under the org root.
             </div>
             <template x-if="!nodesLoading && nodes.length > 0">
                 <div>
@@ -253,13 +255,26 @@ function orgsPage() {
         },
 
         orgRootNode() {
-            return this.nodes.find(n => n.node_type === 'org') || null;
+            const byType = this.nodes.find(n => String(n.node_type) === 'org');
+            if (byType) return byType;
+            return this.nodes.find(n =>
+                (n.parent_id === null || n.parent_id === undefined || n.parent_id === '')
+                && Number(n.depth) === 0
+            ) || null;
         },
 
-        openAddNode() {
+        async openAddNode() {
+            if (!this.selectedOrg) {
+                toast('Select an organization first', 'error');
+                return;
+            }
+            if (this.nodesLoading) {
+                return;
+            }
+            await this.loadNodesForSelectedOrg();
             const root = this.orgRootNode();
             if (!root) {
-                toast('Load the org tree first', 'error');
+                toast('Could not find the organization root node', 'error');
                 return;
             }
             this.setAddNodeParent(root);
@@ -301,9 +316,30 @@ function orgsPage() {
         async selectOrg(org) {
             this.selectedOrg = org;
             this.showAddNode = false;
+            await this.loadNodesForSelectedOrg();
+        },
+
+        async loadNodesForSelectedOrg() {
+            if (!this.selectedOrg) {
+                return;
+            }
             this.nodesLoading = true;
-            const res = await api.get(`/orgs/${org.id}/nodes`);
-            if (res.ok) this.nodes = res.data.data.nodes;
+            this.nodes = [];
+
+            const res = await api.get(`/orgs/${this.selectedOrg.id}/nodes`);
+            if (res.ok && res.data?.data?.nodes) {
+                this.nodes = res.data.data.nodes;
+            } else if (!res.ok) {
+                toast(res.data?.error || 'Failed to load org tree', 'error');
+            }
+
+            if (this.nodes.length === 0) {
+                const orgRes = await api.get(`/orgs/${this.selectedOrg.id}`);
+                if (orgRes.ok && orgRes.data?.data?.nodes?.length) {
+                    this.nodes = orgRes.data.data.nodes;
+                }
+            }
+
             this.nodesLoading = false;
         },
 
