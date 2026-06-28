@@ -76,22 +76,8 @@ class Router
     {
         $previousPrefix = $this->prefix;
         $this->prefix   = $previousPrefix . $prefix;
-
-        // Temporarily inject group middleware into global stack for this group
-        $groupMiddlewareAdded = [];
-        foreach ($middleware as $mw) {
-            $this->globalMiddleware[] = $mw;
-            $groupMiddlewareAdded[]   = array_key_last($this->globalMiddleware);
-        }
-
         $callback($this);
-
-        // Remove group middleware from global stack
-        foreach (array_reverse($groupMiddlewareAdded) as $idx) {
-            unset($this->globalMiddleware[$idx]);
-        }
-        $this->globalMiddleware = array_values($this->globalMiddleware);
-        $this->prefix           = $previousPrefix;
+        $this->prefix = $previousPrefix;
     }
 
     /**
@@ -179,9 +165,17 @@ class Router
 
     private function addRoute(string $method, string $path, callable $handler, array $middleware): void
     {
+        $pattern = $this->prefix . $path;
+        // Normalize: strip trailing slash unless root, ensure leading slash
+        if ($pattern !== '/' && str_ends_with($pattern, '/')) {
+            $pattern = rtrim($pattern, '/');
+        }
+        if (!str_starts_with($pattern, '/')) {
+            $pattern = '/' . $pattern;
+        }
         $this->routes[] = [
             'method'     => $method,
-            'pattern'    => $this->prefix . $path,
+            'pattern'    => $pattern,
             'handler'    => $handler,
             'middleware' => $middleware,
         ];
