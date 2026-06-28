@@ -5,12 +5,8 @@
  * Phase 1: password reset and contact verification only.
  * Phase 2+: full alert delivery.
  *
- * Requires PHPMailer. Install via:
- *   cd /home/dh_w9tij7/nexalert.area51consulting.com
- *   php vendor/phpmailer/phpmailer/autoload.php (after composer install)
- *
- * Manual install (no Composer):
- *   Download PHPMailer src/ to api/lib/PHPMailer/
+ * PHPMailer 6.9.3 is vendored at api/src/lib/PHPMailer/ (see LICENSE).
+ * Composer autoload in api/vendor/ is also supported if present.
  */
 
 declare(strict_types=1);
@@ -135,7 +131,7 @@ HTML;
      */
     private static function send(string $to, string $subject, string $htmlBody): void
     {
-        // Locate PHPMailer - support both Composer and manual install
+        // Locate PHPMailer — vendored at api/src/lib/PHPMailer/ or Composer api/vendor/
         $composerAutoload = __DIR__ . '/../../vendor/autoload.php';
         $manualSrc        = __DIR__ . '/../lib/PHPMailer/PHPMailer.php';
 
@@ -146,7 +142,7 @@ HTML;
             require_once __DIR__ . '/../lib/PHPMailer/SMTP.php';
             require_once __DIR__ . '/../lib/PHPMailer/Exception.php';
         } else {
-            Logger::error('PHPMailer not found. Install via Composer or place src in api/lib/PHPMailer/');
+            Logger::error('PHPMailer not found. Expected api/src/lib/PHPMailer/ or api/vendor/autoload.php');
             throw new \RuntimeException('Mail library not available');
         }
 
