@@ -22,7 +22,14 @@ $pageSubtitle = 'Preview alert recipients and build canonical target expressions
             </div>
             <div class="p-5 space-y-4">
                 <template x-for="(row, rowIdx) in orRows" :key="rowIdx">
-                    <div class="rounded-xl border border-gray-200 dark:border-gray-700 p-4 space-y-3">
+                    <div class="space-y-3">
+                        <div x-show="rowIdx > 0"
+                             class="flex items-center gap-3 text-[10px] font-bold uppercase tracking-wider text-red-500">
+                            <span class="flex-1 border-t border-red-200 dark:border-red-900/50"></span>
+                            OR
+                            <span class="flex-1 border-t border-red-200 dark:border-red-900/50"></span>
+                        </div>
+                        <div class="rounded-xl border border-gray-200 dark:border-gray-700 p-4 space-y-3">
                         <div class="flex items-center justify-between">
                             <span class="text-xs font-semibold uppercase tracking-wider text-gray-400"
                                   x-text="'OR group ' + (rowIdx + 1)"></span>
@@ -30,24 +37,32 @@ $pageSubtitle = 'Preview alert recipients and build canonical target expressions
                                     class="text-xs text-gray-400 hover:text-red-500">Remove</button>
                         </div>
 
-                        <div class="flex flex-wrap gap-2 min-h-[2rem]">
-                            <template x-for="(dim, dimKey) in row" :key="dimKey">
-                                <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-mono
-                                             bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200">
-                                    <span x-text="dimKey + ':' + dim"></span>
-                                    <button @click="removeDimension(rowIdx, dimKey)" class="text-gray-400 hover:text-red-500">&times;</button>
+                        <div class="flex flex-wrap items-center gap-2 min-h-[2rem]">
+                            <template x-for="(dimKey, dimIdx) in rowDimensionKeys(row)" :key="dimKey">
+                                <span class="inline-flex items-center gap-1.5">
+                                    <span x-show="dimIdx > 0"
+                                          class="text-[10px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400 px-0.5">AND</span>
+                                    <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-mono
+                                                 bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200">
+                                        <span x-text="dimKey + ':' + row[dimKey]"></span>
+                                        <button @click="removeDimension(rowIdx, dimKey)" class="text-gray-400 hover:text-red-500">&times;</button>
+                                    </span>
                                 </span>
                             </template>
-                            <span x-show="Object.keys(row).length === 0" class="text-xs text-gray-400 italic">No dimensions — add one below</span>
+                            <span x-show="rowDimensionKeys(row).length === 0" class="text-xs text-gray-400 italic">No dimensions — add one below</span>
                         </div>
 
                         <div class="flex flex-wrap gap-2">
                             <template x-for="t in dimensionTypes" :key="t">
                                 <button @click="openPicker(rowIdx, t)"
+                                        x-show="!row[t]"
                                         class="px-2.5 py-1 text-xs rounded-lg border border-dashed border-gray-300
                                                dark:border-gray-600 text-gray-500 hover:border-red-400 hover:text-red-600"
                                         x-text="'+ ' + t"></button>
                             </template>
+                            <span x-show="rowDimensionKeys(row).length >= dimensionTypes.length"
+                                  class="text-xs text-gray-400 italic self-center">All dimensions set</span>
+                        </div>
                         </div>
                     </div>
                 </template>
@@ -235,17 +250,24 @@ function testSendPage() {
         },
 
         addOrRow() {
-            this.orRows.push({});
+            this.orRows = [...this.orRows, {}];
             this.syncFromBuilder();
         },
 
         removeOrRow(idx) {
-            this.orRows.splice(idx, 1);
+            this.orRows = this.orRows.filter((_, i) => i !== idx);
+            if (this.orRows.length === 0) this.orRows = [{}];
             this.syncFromBuilder();
         },
 
+        rowDimensionKeys(row) {
+            return this.dimensionTypes.filter(k => row[k]);
+        },
+
         removeDimension(rowIdx, dimKey) {
-            delete this.orRows[rowIdx][dimKey];
+            const next = { ...this.orRows[rowIdx] };
+            delete next[dimKey];
+            this.orRows = this.orRows.map((row, i) => (i === rowIdx ? next : row));
             this.syncFromBuilder();
         },
 
@@ -273,16 +295,20 @@ function testSendPage() {
             const parts = this.expression.split(/\s+OR\s+/i).map(s => s.trim()).filter(Boolean);
             const rows = [];
             for (const part of parts) {
-                let inner = part.replace(/^\(|\)$/g, '').trim();
+                let inner = part.trim();
+                while (inner.startsWith('(') && inner.endsWith(')')) {
+                    inner = inner.slice(1, -1).trim();
+                }
                 const andParts = inner.split(/\s+AND\s+/i).map(s => s.trim());
                 const row = {};
                 for (const p of andParts) {
                     const m = p.match(/^(org|node|tag|group|user):(.+)$/i);
-                    if (m) row[m[1].toLowerCase()] = m[2].toLowerCase();
+                    if (m) row[m[1].toLowerCase()] = m[2];
                 }
                 if (Object.keys(row).length) rows.push(row);
             }
             this.orRows = rows.length ? rows : [{}];
+            this.syncFromBuilder();
             toast('Expression loaded into builder');
         },
 
@@ -350,8 +376,11 @@ function testSendPage() {
         },
 
         selectEntity(item) {
-            const row = this.orRows[this.picker.rowIdx];
-            row[this.picker.type] = item._val;
+            const rowIdx = this.picker.rowIdx;
+            const type = this.picker.type;
+            this.orRows = this.orRows.map((row, i) =>
+                i === rowIdx ? { ...row, [type]: item._val } : row
+            );
             this.picker.open = false;
             this.syncFromBuilder();
             this.runPreview();
@@ -370,9 +399,10 @@ function testSendPage() {
         async runPreview() {
             this.loading = true;
             this.parseErrors = [];
+            this.syncFromBuilder();
             const targets = this.structuredPayload();
             const body = targets.length
-                ? { targets, expression: this.expression }
+                ? { targets }
                 : { expression: this.expression };
 
             const res = await api.post('/targets/preview', body);
