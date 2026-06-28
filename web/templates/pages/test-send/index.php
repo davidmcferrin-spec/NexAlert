@@ -1,15 +1,48 @@
 <?php
-$pageTitle    = 'Test Send';
-$pageSubtitle = 'Preview alert recipients and build nested AND/OR target expressions';
+$pageTitle    = 'Target Builder';
+$pageSubtitle = 'Build nested AND/OR targets, save presets, preview recipients, and copy API payloads';
 ?>
 
 <div x-data="testSendPage()" x-init="init()" class="space-y-6">
 
     <div class="rounded-xl border border-blue-200 dark:border-blue-900/50 bg-blue-50 dark:bg-blue-950/30 px-4 py-3 text-sm text-blue-800 dark:text-blue-200"
-         <?= tip_attr('Test Send resolves targets exactly like live alerts. Use Send Alert to carry expression + tree to the composer.', 'bottom') ?>>
+         <?= tip_attr('Target Builder resolves targets exactly like live alerts. Save presets for reuse in Send Alert or via API target_preset.', 'bottom') ?>>
         Build nested <strong>AND</strong> / <strong>OR</strong> groups with multiple tags, nodes, groups, and users.
         Example: <code class="font-mono text-xs">org:nexstar AND (tag:eng OR tag:noc OR group:on-call@nexstar)</code>.
-        Preview uses the same resolver as live alert sends.
+        Save as a <strong>preset</strong> for quick reuse in Send Alert or API calls with <code class="font-mono text-xs">target_preset</code>.
+    </div>
+
+    <!-- Saved presets -->
+    <div class="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 px-5 py-4">
+        <div class="flex flex-wrap items-center gap-3">
+            <label class="text-xs font-semibold uppercase tracking-wider text-gray-500">Presets</label>
+            <select @change="onPresetSelect($event.target.value); $event.target.value = ''"
+                    class="text-sm rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 px-3 py-1.5 min-w-[12rem]">
+                <option value="">Load preset…</option>
+                <template x-for="p in presets" :key="p.id">
+                    <option :value="p.id" x-text="p.name + (p.is_global == 1 ? ' (global)' : (p.org_name ? ' · ' + p.org_name : ''))"></option>
+                </template>
+            </select>
+            <span x-show="activePreset" class="text-xs text-gray-500 font-mono" x-text="activePreset ? activePreset.slug : ''"></span>
+            <div class="flex flex-wrap gap-2 ml-auto">
+                <button @click="openPresetModal('create')"
+                        class="px-3 py-1.5 text-xs font-semibold rounded-lg bg-red-600 hover:bg-red-700 text-white">
+                    Save as preset
+                </button>
+                <button x-show="activePresetId" @click="openPresetModal('edit')"
+                        class="px-3 py-1.5 text-xs font-medium rounded-lg bg-gray-100 dark:bg-gray-800 hover:bg-gray-200">
+                    Edit details
+                </button>
+                <button x-show="activePresetId" @click="saveActivePreset()"
+                        class="px-3 py-1.5 text-xs font-medium rounded-lg bg-gray-100 dark:bg-gray-800 hover:bg-gray-200">
+                    Save changes
+                </button>
+                <button x-show="activePresetId" @click="deleteActivePreset()"
+                        class="px-3 py-1.5 text-xs font-medium rounded-lg text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30">
+                    Delete
+                </button>
+            </div>
+        </div>
     </div>
 
     <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
@@ -136,7 +169,7 @@ $pageSubtitle = 'Preview alert recipients and build nested AND/OR target express
                     <h2 class="text-sm font-semibold text-gray-900 dark:text-white">Canonical Expression</h2>
                 </div>
                 <div class="p-5 space-y-3">
-                    <textarea x-model="expression" rows="4"
+                    <textarea x-model="expression" @input="clearActivePreset()" rows="4"
                               placeholder="(org:nexstar AND (tag:engineering OR tag:noc)) OR group:on-call@nexstar"
                               class="w-full px-3 py-2 text-sm font-mono rounded-xl border border-gray-200 dark:border-gray-700
                                      bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-red-500"></textarea>
@@ -250,6 +283,43 @@ $pageSubtitle = 'Preview alert recipients and build nested AND/OR target express
         </div>
     </div>
 
+    <!-- Preset save/edit modal -->
+    <div x-show="presetModal.open" x-cloak
+         class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
+         @keydown.escape.window="presetModal.open = false">
+        <div class="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 shadow-xl max-w-md w-full p-6 space-y-4"
+             @click.outside="presetModal.open = false">
+            <h3 class="text-sm font-semibold text-gray-900 dark:text-white"
+                x-text="presetModal.mode === 'create' ? 'Save target preset' : 'Edit preset details'"></h3>
+            <div>
+                <label class="block text-xs font-medium text-gray-500 mb-1">Name</label>
+                <input type="text" x-model="presetModal.name" placeholder="On-call NOC"
+                       class="w-full px-3 py-2 text-sm rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+            </div>
+            <div>
+                <label class="block text-xs font-medium text-gray-500 mb-1">Slug (API)</label>
+                <input type="text" x-model="presetModal.slug" placeholder="on-call-noc"
+                       class="w-full px-3 py-2 text-sm font-mono rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+            </div>
+            <div>
+                <label class="block text-xs font-medium text-gray-500 mb-1">Description</label>
+                <textarea x-model="presetModal.description" rows="2" placeholder="Optional notes…"
+                          class="w-full px-3 py-2 text-sm rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800"></textarea>
+            </div>
+            <label class="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
+                <input type="checkbox" x-model="presetModal.global" class="rounded border-gray-300">
+                Global preset (all orgs — super admin only)
+            </label>
+            <div class="flex justify-end gap-2 pt-2">
+                <button @click="presetModal.open = false" class="px-4 py-2 text-sm text-gray-500">Cancel</button>
+                <button @click="submitPresetModal()"
+                        class="px-4 py-2 text-sm font-semibold rounded-xl bg-red-600 hover:bg-red-700 text-white">
+                    <span x-text="presetModal.mode === 'create' ? 'Save preset' : 'Update'"></span>
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- Entity picker modal -->
     <div x-show="picker.open" x-cloak
          class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
@@ -297,13 +367,17 @@ function testSendPage() {
         loading: false,
         preview: {},
         restSnippet: '',
+        presets: [],
+        activePresetId: null,
+        activePreset: null,
+        presetModal: { open: false, mode: 'create', name: '', slug: '', description: '', global: false },
         picker: { open: false, type: '', path: '', query: '', loading: false },
         pickerResults: [],
         entities: { orgs: [], tags: [], groups: [], nodes: [], users: [] },
         syncLock: false,
 
         async init() {
-            await this.loadEntities('');
+            await Promise.all([this.loadEntities(''), this.loadPresets()]);
             const savedExpr = sessionStorage.getItem('nexalert_target_expression');
             const savedTree = sessionStorage.getItem('nexalert_target_tree');
             if (savedTree) {
@@ -324,20 +398,150 @@ function testSendPage() {
         saveForComposer() {
             sessionStorage.setItem('nexalert_target_expression', this.expression);
             sessionStorage.setItem('nexalert_target_tree', JSON.stringify(this.targetTree));
+            if (this.activePreset?.slug) {
+                sessionStorage.setItem('nexalert_target_preset', this.activePreset.slug);
+            } else {
+                sessionStorage.removeItem('nexalert_target_preset');
+            }
+        },
+
+        async loadPresets() {
+            const res = await api.get('/targets/presets');
+            if (res.ok) this.presets = res.data.data.presets || [];
+        },
+
+        async onPresetSelect(id) {
+            if (!id) return;
+            await this.loadPresetById(parseInt(id, 10));
+        },
+
+        async loadPresetById(id) {
+            const res = await api.get('/targets/presets/' + id);
+            if (!res.ok) {
+                toast(res.data?.error || 'Could not load preset', 'error');
+                return;
+            }
+            const p = res.data.data;
+            this.activePresetId = p.id;
+            this.activePreset = p;
+            if (p.target_tree && p.target_tree.type === 'group') {
+                this.targetTree = cloneTree(p.target_tree);
+            }
+            this.expression = p.expression || '';
+            if (!p.target_tree) {
+                await this.syncFromExpression();
+            } else {
+                this.syncFromBuilder();
+            }
+            await this.runPreview();
+            toast('Loaded preset: ' + p.name);
+        },
+
+        openPresetModal(mode) {
+            this.presetModal.mode = mode;
+            if (mode === 'edit' && this.activePreset) {
+                this.presetModal.name = this.activePreset.name;
+                this.presetModal.slug = this.activePreset.slug;
+                this.presetModal.description = this.activePreset.description || '';
+                this.presetModal.global = this.activePreset.is_global == 1;
+            } else {
+                this.presetModal.name = '';
+                this.presetModal.slug = this.slugFromName(this.expression.slice(0, 40) || 'preset');
+                this.presetModal.description = '';
+                this.presetModal.global = false;
+            }
+            this.presetModal.open = true;
+        },
+
+        slugFromName(name) {
+            return String(name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 64) || 'preset';
+        },
+
+        async submitPresetModal() {
+            this.syncFromBuilder();
+            const body = {
+                name: this.presetModal.name.trim(),
+                slug: this.presetModal.slug.trim(),
+                description: this.presetModal.description.trim(),
+                expression: this.expression,
+                target_tree: this.targetTree,
+                global: this.presetModal.global,
+            };
+            if (!body.name) {
+                toast('Name is required', 'error');
+                return;
+            }
+            let res;
+            if (this.presetModal.mode === 'create') {
+                res = await api.post('/targets/presets', body);
+            } else if (this.activePresetId) {
+                res = await api.put('/targets/presets/' + this.activePresetId, body);
+            }
+            if (!res?.ok) {
+                toast(res?.data?.error || res?.data?.errors?.slug || 'Save failed', 'error');
+                return;
+            }
+            this.presetModal.open = false;
+            this.activePresetId = res.data.data.id;
+            this.activePreset = res.data.data;
+            await this.loadPresets();
+            await this.runPreview();
+            toast(this.presetModal.mode === 'create' ? 'Preset saved' : 'Preset updated');
+        },
+
+        async saveActivePreset() {
+            if (!this.activePresetId) return;
+            this.syncFromBuilder();
+            const res = await api.put('/targets/presets/' + this.activePresetId, {
+                name: this.activePreset.name,
+                slug: this.activePreset.slug,
+                description: this.activePreset.description || '',
+                expression: this.expression,
+                target_tree: this.targetTree,
+            });
+            if (res.ok) {
+                this.activePreset = res.data.data;
+                await this.loadPresets();
+                await this.runPreview();
+                toast('Preset saved');
+            } else {
+                toast(res.data?.error || 'Save failed', 'error');
+            }
+        },
+
+        async deleteActivePreset() {
+            if (!this.activePresetId || !confirm('Delete this target preset?')) return;
+            const res = await api.delete('/targets/presets/' + this.activePresetId);
+            if (res.ok) {
+                this.activePresetId = null;
+                this.activePreset = null;
+                await this.loadPresets();
+                toast('Preset deleted');
+            } else {
+                toast(res.data?.error || 'Delete failed', 'error');
+            }
+        },
+
+        clearActivePreset() {
+            this.activePresetId = null;
+            this.activePreset = null;
         },
 
         resetTree() {
             this.targetTree = defaultTargetTree();
+            this.clearActivePreset();
             this.syncFromBuilder();
         },
 
         addOrBranch() {
+            this.clearActivePreset();
             this.targetTree = cloneTree(this.targetTree);
             this.targetTree.children.push(defaultAndBranch());
             this.syncFromBuilder();
         },
 
         removeBranch(path) {
+            this.clearActivePreset();
             const idx = parseInt(path.split('.').pop(), 10);
             this.targetTree = cloneTree(this.targetTree);
             this.targetTree.children.splice(idx, 1);
@@ -348,6 +552,7 @@ function testSendPage() {
         },
 
         addOrSubgroup(path) {
+            this.clearActivePreset();
             this.targetTree = cloneTree(this.targetTree);
             const node = this.nodeAt(path);
             if (node && node.type === 'group') {
@@ -358,6 +563,7 @@ function testSendPage() {
         },
 
         removeChild(path) {
+            this.clearActivePreset();
             const parts = path.replace(/^root\.?/, '').split('.').filter(Boolean);
             const idx = parseInt(parts.pop(), 10);
             this.targetTree = cloneTree(this.targetTree);
@@ -444,6 +650,7 @@ function testSendPage() {
         },
 
         selectEntity(item) {
+            this.clearActivePreset();
             const path = this.picker.path;
             const type = this.picker.type;
             this.targetTree = cloneTree(this.targetTree);
@@ -472,6 +679,7 @@ function testSendPage() {
 
         async syncFromExpression() {
             if (!this.expression.trim()) return;
+            this.clearActivePreset();
             const res = await api.post('/targets/preview', { expression: this.expression.trim() });
             if (!res.ok) {
                 toast(res.data?.error || 'Could not parse expression', 'error');
@@ -519,7 +727,12 @@ function testSendPage() {
                 }
                 this.syncLock = false;
                 if (this.preview.rest_api?.body) {
-                    this.restSnippet = JSON.stringify(this.preview.rest_api.body, null, 2);
+                    const body = { ...this.preview.rest_api.body };
+                    if (this.activePreset?.slug) {
+                        delete body.targets;
+                        body.target_preset = this.activePreset.slug;
+                    }
+                    this.restSnippet = JSON.stringify(body, null, 2);
                 }
             }
         },

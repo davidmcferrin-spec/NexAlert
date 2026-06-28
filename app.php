@@ -112,6 +112,7 @@ $routes = [
         '/admin/tags/new'         => 'tags/form',
         '/admin/tags/edit'        => 'tags/form',
         '/admin/test-send'        => 'test-send/index',
+        '/admin/targets'          => 'test-send/index',
         '/admin/alerts'           => 'alerts/form',
         '/admin/alerts/new'       => 'alerts/form',
         '/admin/alerts/history'   => 'alerts/index',

@@ -42,7 +42,7 @@ $pageSubtitle = 'System overview';
                 ['href' => '/admin/users/import', 'label' => 'Import Users',     'tip' => 'Bulk CSV import with org and role mapping'],
                 ['href' => '/admin/groups/new',   'label' => 'New Group',        'tip' => 'Create a static group for targeting'],
                 ['href' => '/admin/alerts/new',   'label' => 'Send Alert',       'tip' => 'Compose and dispatch a live alert'],
-                ['href' => '/admin/test-send',    'label' => 'Test Send',        'tip' => 'Preview targeting before sending'],
+                ['href' => '/admin/targets',    'label' => 'Target Builder', 'tip' => 'Build, save, and preview alert targeting'],
                 ['href' => '/admin/tokens/new',   'label' => 'Create API Token', 'tip' => 'Token for external systems to POST alerts'],
             ];
             foreach ($actions as $a): ?>

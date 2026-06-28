@@ -275,6 +275,31 @@ class AlertService
      */
     private static function resolveInputTargets(Database $db, Request $request): array
     {
+        $presetSlug = trim((string) $request->input('target_preset', ''));
+        if ($presetSlug !== '') {
+            $preset = TargetPresetService::resolveForAlert($db, $request, $presetSlug);
+            $tree   = $preset['target_tree'];
+            if (is_array($tree) && ($tree['type'] ?? '') === 'group') {
+                return self::compileTreeToTargets($db, $tree);
+            }
+
+            $expression = trim($preset['expression']);
+            if ($expression === '') {
+                return ['targets' => [], 'errors' => ['target_preset has no expression']];
+            }
+            $compiled = TargetExpressionService::compileExpressionAst($expression);
+            if ($compiled['errors'] !== []) {
+                return ['targets' => [], 'errors' => $compiled['errors']];
+            }
+            $dnf = \NexAlert\Services\TargetAstService::astToDnf($compiled['ast']);
+            if ($dnf['errors'] !== []) {
+                return ['targets' => [], 'errors' => $dnf['errors']];
+            }
+            $converted = TargetExpressionService::dnfToAlertTargets($db, $dnf['conjunctions']);
+
+            return ['targets' => $converted['targets'], 'errors' => $converted['errors']];
+        }
+
         $tree = $request->input('target_tree');
         if (is_array($tree) && ($tree['type'] ?? '') === 'group') {
             return self::compileTreeToTargets($db, $tree);

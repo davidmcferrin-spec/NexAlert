@@ -155,15 +155,28 @@ $pageSubtitle = 'Compose and dispatch a multi-channel alert';
             <h2 class="text-sm font-semibold text-gray-900 dark:text-white">
                 <?= tip_label('Targets', 'Who receives this alert. OR groups are unioned; AND terms within a group must all match.') ?>
             </h2>
-            <a href="/admin/test-send" class="text-xs text-red-600 hover:underline"
-               <?= tip_attr('Open the visual target builder — expression and tree carry over here', 'left') ?>>
-                Open target builder
+            <a href="/admin/targets" class="text-xs text-red-600 hover:underline"
+               <?= tip_attr('Open Target Builder — expression, tree, and presets carry over here', 'left') ?>>
+                Open Target Builder
             </a>
         </div>
-        <p x-show="hasTargetTree" class="text-xs text-green-600 dark:text-green-400">
-            ✓ Target tree loaded from Test Send — will be sent with the alert for exact AND/OR resolution.
+        <div>
+            <label class="block text-xs font-medium text-gray-500 mb-1">Target preset</label>
+            <select x-model="selectedPresetId" @change="loadTargetPreset()"
+                    class="w-full max-w-md px-3 py-2 text-sm rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800">
+                <option value="">Custom target (manual expression)</option>
+                <template x-for="p in targetPresets" :key="p.id">
+                    <option :value="p.id" x-text="p.name + (p.is_global == 1 ? ' (global)' : '')"></option>
+                </template>
+            </select>
+            <p x-show="targetPresetSlug" class="text-xs text-green-600 dark:text-green-400 mt-1">
+                ✓ Using preset <code class="font-mono" x-text="targetPresetSlug"></code> — edit below to override
+            </p>
+        </div>
+        <p x-show="hasTargetTree && !targetPresetSlug" class="text-xs text-green-600 dark:text-green-400">
+            ✓ Target tree loaded from Target Builder — will be sent with the alert for exact AND/OR resolution.
         </p>
-        <textarea x-model="form.targets" rows="3"
+        <textarea x-model="form.targets" @input="onTargetsEdited()" rows="3"
                   placeholder="(org:nexstar AND tag:engineering) OR group:noc@nexstar"
                   class="w-full px-3 py-2 text-sm font-mono rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800"></textarea>
         <div class="flex items-center gap-3">
@@ -210,6 +223,10 @@ function alertComposer() {
         },
         targetTree: null,
         hasTargetTree: false,
+        targetPresets: [],
+        selectedPresetId: '',
+        targetPresetSlug: '',
+        targetsOverridden: false,
         escalationTargetType: 'none',
         escalationUsers: [],
         escalationGroups: [],
@@ -227,6 +244,7 @@ function alertComposer() {
 
             const savedExpr = sessionStorage.getItem('nexalert_target_expression');
             const savedTree = sessionStorage.getItem('nexalert_target_tree');
+            const savedPreset = sessionStorage.getItem('nexalert_target_preset');
             if (savedExpr) {
                 this.form.targets = savedExpr;
                 sessionStorage.removeItem('nexalert_target_expression');
@@ -241,6 +259,20 @@ function alertComposer() {
                     this.hasTargetTree = false;
                 }
             }
+            if (savedPreset) {
+                this.targetPresetSlug = savedPreset;
+                sessionStorage.removeItem('nexalert_target_preset');
+                this.targetsOverridden = false;
+            }
+
+            const presetsRes = await api.get('/targets/presets');
+            if (presetsRes.ok) {
+                this.targetPresets = presetsRes.data.data.presets || [];
+                if (this.targetPresetSlug) {
+                    const match = this.targetPresets.find(p => p.slug === this.targetPresetSlug);
+                    if (match) this.selectedPresetId = String(match.id);
+                }
+            }
 
             const res = await api.get('/users?limit=200');
             if (res.ok) {
@@ -252,13 +284,47 @@ function alertComposer() {
             }
         },
 
+        onTargetsEdited() {
+            this.targetsOverridden = true;
+            this.targetPresetSlug = '';
+            this.selectedPresetId = '';
+        },
+
+        async loadTargetPreset() {
+            if (!this.selectedPresetId) {
+                this.targetPresetSlug = '';
+                this.targetsOverridden = false;
+                return;
+            }
+            const res = await api.get('/targets/presets/' + this.selectedPresetId);
+            if (!res.ok) {
+                toast(res.data?.error || 'Could not load preset', 'error');
+                return;
+            }
+            const p = res.data.data;
+            this.form.targets = p.expression || '';
+            this.targetPresetSlug = p.slug;
+            this.targetsOverridden = false;
+            if (p.target_tree && p.target_tree.type === 'group') {
+                this.targetTree = p.target_tree;
+                this.hasTargetTree = true;
+            } else {
+                this.targetTree = null;
+                this.hasTargetTree = false;
+            }
+            this.preview = {};
+        },
+
         async previewTargets() {
-            if (!this.form.targets.trim() && !this.hasTargetTree) {
-                toast('Enter a target expression or load from Test Send', 'error');
+            if (!this.form.targets.trim() && !this.hasTargetTree && !this.targetPresetSlug) {
+                toast('Enter a target expression, load a preset, or open Target Builder', 'error');
                 return;
             }
             const payload = { expression: this.form.targets };
-            if (this.hasTargetTree) payload.target_tree = this.targetTree;
+            if (this.hasTargetTree && this.targetsOverridden) payload.target_tree = this.targetTree;
+            if (this.targetPresetSlug && !this.targetsOverridden) {
+                payload.expression = this.form.targets;
+            }
             const res = await api.post('/targets/preview', payload);
             if (res.ok) this.preview = res.data.data;
             else toast(res.data?.error || 'Preview failed', 'error');
@@ -269,8 +335,9 @@ function alertComposer() {
                 toast('Subject and body are required', 'error');
                 return;
             }
-            if (!this.form.targets.trim() && !this.hasTargetTree) {
-                toast('Target expression is required', 'error');
+            const usePreset = this.targetPresetSlug && !this.targetsOverridden;
+            if (!usePreset && !this.form.targets.trim() && !this.hasTargetTree) {
+                toast('Target expression or preset is required', 'error');
                 return;
             }
             if (!this.form.channels.length) {
@@ -285,10 +352,14 @@ function alertComposer() {
                 subject: this.form.subject,
                 body: this.form.body,
                 channels: this.form.channels,
-                targets: this.form.targets,
             };
-            if (this.hasTargetTree) {
-                body.target_tree = this.targetTree;
+            if (usePreset) {
+                body.target_preset = this.targetPresetSlug;
+            } else {
+                body.targets = this.form.targets;
+                if (this.hasTargetTree) {
+                    body.target_tree = this.targetTree;
+                }
             }
             if (this.form.alert_type === 'poll') {
                 body.poll_question = this.form.poll_question;

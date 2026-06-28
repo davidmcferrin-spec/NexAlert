@@ -16,6 +16,7 @@ use NexAlert\Controllers\TokenController;
 use NexAlert\Controllers\AuditController;
 use NexAlert\Controllers\TagController;
 use NexAlert\Controllers\TargetController;
+use NexAlert\Controllers\TargetPresetController;
 use NexAlert\Controllers\RoleController;
 use NexAlert\Controllers\ProfileController;
 use NexAlert\Controllers\AlertController;
@@ -204,10 +205,18 @@ return function (Router $router): void {
     $router->post('/api/v1/webhooks/twilio/sms', [WebhookController::class, 'twilioSms']);
 
     // -----------------------------------------------------------------------
-    // Target preview (Test Send)
+    // Target preview + presets (Target Builder)
     // -----------------------------------------------------------------------
     $router->group('/api/v1/targets', function (Router $r): void {
         $r->post('/preview',  [TargetController::class, 'preview'],  [AuthMiddleware::required()]);
+
+        $r->get('/presets',              [TargetPresetController::class, 'list'],   [AuthMiddleware::withPermission('alert.send')]);
+        $r->post('/presets',             [TargetPresetController::class, 'create'], [AuthMiddleware::withPermission('alert.send')]);
+        $r->get('/presets/by-slug/{slug}', [TargetPresetController::class, 'showBySlug'], [AuthMiddleware::withPermission('alert.send')]);
+        $r->get('/presets/{id:\d+}',     [TargetPresetController::class, 'show'],   [AuthMiddleware::withPermission('alert.send')]);
+        $r->put('/presets/{id:\d+}',     [TargetPresetController::class, 'update'], [AuthMiddleware::withPermission('alert.send')]);
+        $r->delete('/presets/{id:\d+}',  [TargetPresetController::class, 'delete'], [AuthMiddleware::withPermission('alert.send')]);
+
         $r->get('/entities',  [TargetController::class, 'entities'], [AuthMiddleware::required()]);
     });
 
