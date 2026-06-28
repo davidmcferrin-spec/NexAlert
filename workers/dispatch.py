@@ -100,6 +100,22 @@ def load_vapid_private_key() -> str:
     return private_key
 
 
+def vapid_public_b64url(vapid) -> str:
+    """Base64url uncompressed P-256 public key (py_vapid 1.9+ returns key objects)."""
+    from cryptography.hazmat.primitives import serialization  # type: ignore
+    from py_vapid.utils import b64urlencode  # type: ignore
+
+    derived = vapid.public_key
+    if isinstance(derived, bytes):
+        return derived.decode()
+    raw = derived.public_bytes(
+        serialization.Encoding.X962,
+        serialization.PublicFormat.UncompressedPoint,
+    )
+    encoded = b64urlencode(raw)
+    return encoded.decode() if isinstance(encoded, bytes) else str(encoded)
+
+
 def validate_vapid_config() -> None:
     private_key = env("VAPID_PRIVATE_KEY", "").strip()
     public_key = env("VAPID_PUBLIC_KEY", "").strip()
@@ -110,8 +126,7 @@ def validate_vapid_config() -> None:
         from py_vapid import Vapid02  # type: ignore
 
         vapid = Vapid02.from_string(private_key=private_key)
-        derived = vapid.public_key
-        derived_pub = derived.decode() if isinstance(derived, bytes) else str(derived)
+        derived_pub = vapid_public_b64url(vapid)
         if public_key and derived_pub != public_key:
             log.error(
                 "VAPID key mismatch: public key in .env does not match private key. "
