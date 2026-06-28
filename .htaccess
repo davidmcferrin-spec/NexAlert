@@ -15,6 +15,9 @@ RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
 # Block dotfiles except .well-known
 RewriteRule ^\.(?!well-known) - [F,L]
 
+# Block CLI migration tool from web access
+RewriteRule ^migrate\.php$ - [F,L]
+
 # Block direct access to source directories
 RewriteRule ^(workers/|config/|db/|tests/|docs/|web/) - [F,L]
 

@@ -64,6 +64,7 @@ $userCount = $users['data']['total'] ?? 0;
                 ['href' => '/admin/orgs/new',    'label' => 'New Organization', 'icon' => 'M12 4v16m8-8H4'],
                 ['href' => '/admin/users/new',   'label' => 'Add User',         'icon' => 'M12 4v16m8-8H4'],
                 ['href' => '/admin/users/import','label' => 'Import Users',     'icon' => 'M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12'],
+                ['href' => '/admin/groups/new',  'label' => 'New Group',        'icon' => 'M12 4v16m8-8H4'],
                 ['href' => '/admin/tokens/new',  'label' => 'Create API Token', 'icon' => 'M12 4v16m8-8H4'],
             ];
             foreach ($actions as $a): ?>

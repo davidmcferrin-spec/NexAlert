@@ -11,6 +11,9 @@ use NexAlert\Controllers\HealthController;
 use NexAlert\Controllers\OrgController;
 use NexAlert\Controllers\NodeController;
 use NexAlert\Controllers\UserController;
+use NexAlert\Controllers\GroupController;
+use NexAlert\Controllers\TokenController;
+use NexAlert\Controllers\AuditController;
 use NexAlert\Middleware\AuthMiddleware;
 use NexAlert\Middleware\RateLimitMiddleware;
 
@@ -75,5 +78,39 @@ return function (Router $router): void {
         $r->post('/{id:\d+}/tags',          [UserController::class, 'assignTag'], [AuthMiddleware::withPermission('tag.manage')]);
         $r->delete('/{id:\d+}/tags/{tag_id:\d+}', [UserController::class, 'removeTag'], [AuthMiddleware::withPermission('tag.manage')]);
     });
+
+    // -----------------------------------------------------------------------
+    // Groups
+    // -----------------------------------------------------------------------
+    $router->group('/api/v1/groups', function (Router $r): void {
+        $r->get('/',              [GroupController::class, 'list'],   [AuthMiddleware::required()]);
+        $r->post('/',             [GroupController::class, 'create'], [AuthMiddleware::withPermission('group.manage')]);
+        $r->get('/{id:\d+}',     [GroupController::class, 'get'],    [AuthMiddleware::required()]);
+        $r->put('/{id:\d+}',     [GroupController::class, 'update'], [AuthMiddleware::withPermission('group.manage')]);
+        $r->delete('/{id:\d+}',  [GroupController::class, 'delete'], [AuthMiddleware::withPermission('group.manage')]);
+
+        $r->post('/{id:\d+}/members',                    [GroupController::class, 'addMember'],      [AuthMiddleware::withPermission('group.manage')]);
+        $r->delete('/{id:\d+}/members/{user_id:\d+}',   [GroupController::class, 'removeMember'],   [AuthMiddleware::withPermission('group.manage')]);
+        $r->post('/{id:\d+}/children',                   [GroupController::class, 'addChildGroup'],  [AuthMiddleware::withPermission('group.manage')]);
+        $r->delete('/{id:\d+}/children/{child_id:\d+}', [GroupController::class, 'removeChildGroup'], [AuthMiddleware::withPermission('group.manage')]);
+    });
+
+    // -----------------------------------------------------------------------
+    // System API Tokens
+    // -----------------------------------------------------------------------
+    $router->group('/api/v1/tokens', function (Router $r): void {
+        $r->get('/',             [TokenController::class, 'list'],   [AuthMiddleware::withPermission('system.token.manage')]);
+        $r->post('/',            [TokenController::class, 'create'], [AuthMiddleware::withPermission('system.token.manage')]);
+        $r->get('/{id:\d+}',    [TokenController::class, 'get'],    [AuthMiddleware::withPermission('system.token.manage')]);
+        $r->put('/{id:\d+}',    [TokenController::class, 'update'], [AuthMiddleware::withPermission('system.token.manage')]);
+        $r->delete('/{id:\d+}', [TokenController::class, 'delete'], [AuthMiddleware::withPermission('system.token.manage')]);
+    });
+
+    // -----------------------------------------------------------------------
+    // Audit Log (read-only)
+    // -----------------------------------------------------------------------
+    $router->get('/api/v1/audit', [AuditController::class, 'list'], [
+        AuthMiddleware::withPermission('system.audit.view'),
+    ]);
 
 };
