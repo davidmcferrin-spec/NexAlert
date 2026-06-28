@@ -13,6 +13,9 @@ require_once NEXALERT_ROOT . '/api/autoload.php';
 use NexAlert\Config\Env;
 use NexAlert\Config\Logger;
 
+// Included page templates call Env::get() without their own use import
+class_alias(Env::class, 'Env');
+
 Env::load(NEXALERT_ROOT);
 Logger::init();
 
