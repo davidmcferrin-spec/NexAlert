@@ -20,10 +20,20 @@ $headerActions = '
     <div class="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 overflow-hidden mb-6">
         <div class="flex items-center justify-between px-5 py-4 border-b border-gray-100 dark:border-gray-800">
             <h2 class="text-sm font-semibold text-gray-900 dark:text-white">Organizations</h2>
-            <input type="search" placeholder="Search…" x-model="search"
-                   class="px-3 py-1.5 text-sm rounded-lg border border-gray-200 dark:border-gray-700
-                          bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white
-                          focus:outline-none focus:ring-2 focus:ring-red-500 w-48">
+            <div class="flex items-center gap-3">
+                <select x-model="filterActive" @change="loadOrgs()"
+                        class="px-3 py-1.5 text-sm rounded-lg border border-gray-200 dark:border-gray-700
+                               bg-gray-50 dark:bg-gray-800 text-gray-700 dark:text-gray-300
+                               focus:outline-none focus:ring-2 focus:ring-red-500">
+                    <option value="1">Active</option>
+                    <option value="0">Inactive</option>
+                    <option value="all">All</option>
+                </select>
+                <input type="search" placeholder="Search…" x-model="search"
+                       class="px-3 py-1.5 text-sm rounded-lg border border-gray-200 dark:border-gray-700
+                              bg-gray-50 dark:bg-gray-800 text-gray-900 dark:text-white
+                              focus:outline-none focus:ring-2 focus:ring-red-500 w-48">
+            </div>
         </div>
 
         <div x-show="loading" class="p-8 text-center text-gray-400 text-sm">Loading…</div>
@@ -55,8 +65,10 @@ $headerActions = '
                             <td class="px-5 py-3 text-center text-gray-500 dark:text-gray-400 hidden lg:table-cell" x-text="org.node_count"></td>
                             <td class="px-5 py-3 text-center">
                                 <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium"
-                                      :class="org.is_active ? 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400' : 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-500'"
-                                      x-text="org.is_active ? 'Active' : 'Inactive'"></span>
+                                      :class="isActive(org.is_active)
+                                          ? 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400'
+                                          : 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-500'"
+                                      x-text="isActive(org.is_active) ? 'Active' : 'Inactive'"></span>
                             </td>
                             <td class="px-5 py-3 text-right">
                                 <div class="flex items-center justify-end gap-2">
@@ -195,7 +207,7 @@ $headerActions = '
 function orgsPage() {
     return {
         orgs: [], nodes: [], loading: true, nodesLoading: false,
-        search: '', selectedOrg: null, showAddNode: false,
+        search: '', filterActive: '1', selectedOrg: null, showAddNode: false,
         newNode: { name: '', node_type: 'region', parent_id: null, parentName: '', parent_type: null },
 
         formatNodeType(type) {
@@ -315,8 +327,22 @@ function orgsPage() {
         },
 
         async init() {
-            const res = await api.get('/orgs?limit=200');
-            if (res.ok) this.orgs = res.data.data.orgs;
+            await this.loadOrgs();
+        },
+
+        async loadOrgs() {
+            this.loading = true;
+            const params = new URLSearchParams({ limit: '200', active: this.filterActive });
+            const res = await api.get('/orgs?' + params);
+            if (res.ok) {
+                this.orgs = res.data.data.orgs;
+                if (this.selectedOrg) {
+                    const updated = this.orgs.find(o => o.id === this.selectedOrg.id);
+                    if (updated) this.selectedOrg = updated;
+                }
+            } else {
+                toast(res.data?.error || res.data?.message || 'Failed to load organizations', 'error');
+            }
             this.loading = false;
         },
 
@@ -367,9 +393,7 @@ function orgsPage() {
                 toast('Node added');
                 this.cancelAddNode();
                 await this.selectOrg(this.selectedOrg);
-                // Refresh org list for node count
-                const orgsRes = await api.get('/orgs?limit=200');
-                if (orgsRes.ok) this.orgs = orgsRes.data.data.orgs;
+                await this.loadOrgs();
             } else {
                 const err = res.data.errors
                     ? Object.values(res.data.errors).join(' ')
@@ -394,7 +418,8 @@ function orgsPage() {
             const res = await api.delete(`/orgs/${org.id}`);
             if (res.ok) {
                 toast('Organization deactivated');
-                await this.init();
+                this.selectedOrg = null;
+                await this.loadOrgs();
             } else {
                 toast(res.data.error || 'Failed to deactivate', 'error');
             }

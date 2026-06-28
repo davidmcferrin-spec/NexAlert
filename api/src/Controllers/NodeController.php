@@ -19,6 +19,7 @@ use NexAlert\Api\Request;
 use NexAlert\Api\Response;
 use NexAlert\Config\Database;
 use NexAlert\Services\AuditService;
+use NexAlert\Services\RowNormalizer;
 use NexAlert\Services\TagService;
 use PDOException;
 
@@ -77,14 +78,15 @@ class NodeController
         $nodes = $db->fetchAll(
             "SELECT n.id, n.parent_id, n.node_type, n.name, n.slug,
                     n.path, n.depth, n.is_active, n.created_at,
-                    COUNT(DISTINCT m.user_id) AS member_count
+                    (SELECT COUNT(*) FROM user_org_memberships m
+                     WHERE m.org_node_id = n.id AND m.is_active = 1) AS member_count
              FROM org_nodes n
-             LEFT JOIN user_org_memberships m ON m.org_node_id = n.id AND m.is_active = 1
              WHERE {$whereStr}
-             GROUP BY n.id
              ORDER BY n.path ASC",
             $params
         );
+
+        $nodes = RowNormalizer::mapFlags($nodes, ['is_active', 'member_count']);
 
         if ($asTree) {
             $nodes = self::buildTree($nodes);
@@ -197,11 +199,11 @@ class NodeController
         self::assertOrgAccess($request, $orgId);
 
         $node = $db->fetchOne(
-            'SELECT n.*, COUNT(DISTINCT m.user_id) AS member_count
+            'SELECT n.*,
+                    (SELECT COUNT(*) FROM user_org_memberships m
+                     WHERE m.org_node_id = n.id AND m.is_active = 1) AS member_count
              FROM org_nodes n
-             LEFT JOIN user_org_memberships m ON m.org_node_id = n.id AND m.is_active = 1
-             WHERE n.id = ? AND n.org_id = ?
-             GROUP BY n.id',
+             WHERE n.id = ? AND n.org_id = ?',
             [$nodeId, $orgId]
         );
 
@@ -209,11 +211,16 @@ class NodeController
             Response::notFound('Node not found');
         }
 
+        $node = RowNormalizer::flags($node, ['is_active', 'member_count']);
+
         // Direct children
-        $node['children'] = $db->fetchAll(
-            'SELECT id, parent_id, node_type, name, slug, depth, is_active
-             FROM org_nodes WHERE parent_id = ? ORDER BY name ASC',
-            [$nodeId]
+        $node['children'] = RowNormalizer::mapFlags(
+            $db->fetchAll(
+                'SELECT id, parent_id, node_type, name, slug, depth, is_active
+                 FROM org_nodes WHERE parent_id = ? ORDER BY name ASC',
+                [$nodeId]
+            ),
+            ['is_active']
         );
 
         // Members of this node

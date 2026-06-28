@@ -25,6 +25,7 @@ use NexAlert\Api\Response;
 use NexAlert\Config\Database;
 use NexAlert\Config\Env;
 use NexAlert\Services\AuditService;
+use NexAlert\Services\RowNormalizer;
 use NexAlert\Services\TagService;
 
 class UserController
@@ -106,6 +107,8 @@ class UserController
              LIMIT ? OFFSET ?",
             array_merge($params, [$limit, $offset])
         );
+
+        $rows = RowNormalizer::mapFlags($rows, ['is_active', 'is_locked']);
 
         Response::success([
             'users'  => $rows,
@@ -816,6 +819,12 @@ class UserController
              FROM roles r JOIN user_roles ur ON ur.role_id = r.id
              WHERE ur.user_id = ? AND (ur.expires_at IS NULL OR ur.expires_at > NOW())',
             [$id]
+        );
+
+        $user = RowNormalizer::flags($user, ['is_active', 'is_locked', 'home_override']);
+        $user['contacts'] = RowNormalizer::mapFlags(
+            $user['contacts'],
+            ['is_primary', 'is_verified', 'is_active']
         );
 
         return $user;

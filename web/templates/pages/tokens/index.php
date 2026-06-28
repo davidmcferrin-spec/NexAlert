@@ -17,6 +17,17 @@ $headerActions = '
 
 <div x-data="tokensPage()" x-init="init(<?= $newTokenOnce ? json_encode($newTokenOnce, JSON_THROW_ON_ERROR) : 'null' ?>)">
 
+    <div class="flex flex-wrap items-center gap-3 mb-4">
+        <select x-model="filterActive" @change="loadTokens()"
+                class="px-3 py-2 text-sm rounded-xl border border-gray-200 dark:border-gray-700
+                       bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300
+                       focus:outline-none focus:ring-2 focus:ring-red-500">
+            <option value="1">Active</option>
+            <option value="0">Inactive</option>
+            <option value="all">All</option>
+        </select>
+    </div>
+
     <div x-show="newToken" x-cloak
          class="mb-4 p-4 rounded-xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900">
         <p class="text-sm font-semibold text-amber-800 dark:text-amber-300 mb-2">Copy this token now — it will not be shown again</p>
@@ -54,12 +65,12 @@ $headerActions = '
                             <td class="px-5 py-3 text-gray-400 text-xs hidden lg:table-cell" x-text="token.last_used_at || 'Never'"></td>
                             <td class="px-5 py-3 text-center">
                                 <span class="inline-flex px-2 py-0.5 rounded-full text-xs font-medium"
-                                      :class="token.is_active ? 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400' : 'bg-gray-100 text-gray-500'"
-                                      x-text="token.is_active ? 'Active' : 'Inactive'"></span>
+                                      :class="isActive(token.is_active) ? 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400' : 'bg-gray-100 text-gray-500'"
+                                      x-text="isActive(token.is_active) ? 'Active' : 'Inactive'"></span>
                             </td>
                             <td class="px-5 py-3 text-right">
                                 <a :href="'/admin/tokens/edit?id=' + token.id" class="text-xs text-gray-400 hover:text-gray-600 mr-3">Edit</a>
-                                <button @click="deactivate(token)" class="text-xs text-red-400 hover:text-red-600" x-show="token.is_active">Revoke</button>
+                                <button @click="deactivate(token)" class="text-xs text-red-400 hover:text-red-600" x-show="isActive(token.is_active)">Revoke</button>
                             </td>
                         </tr>
                     </template>
@@ -77,7 +88,7 @@ $headerActions = '
 <script>
 function tokensPage() {
     return {
-        tokens: [], loading: true, newToken: null,
+        tokens: [], loading: true, newToken: null, filterActive: '1',
 
         async init(pendingToken) {
             this.newToken = pendingToken;
@@ -86,8 +97,13 @@ function tokensPage() {
 
         async loadTokens() {
             this.loading = true;
-            const res = await api.get('/tokens?limit=100');
-            if (res.ok) this.tokens = res.data.data.tokens;
+            const params = new URLSearchParams({ limit: '100', active: this.filterActive });
+            const res = await api.get('/tokens?' + params);
+            if (res.ok) {
+                this.tokens = res.data.data.tokens;
+            } else {
+                toast(res.data?.error || res.data?.message || 'Failed to load tokens', 'error');
+            }
             this.loading = false;
         },
 

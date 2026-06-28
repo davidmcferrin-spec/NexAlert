@@ -21,6 +21,7 @@ use NexAlert\Api\Request;
 use NexAlert\Api\Response;
 use NexAlert\Config\Database;
 use NexAlert\Services\AuditService;
+use NexAlert\Services\RowNormalizer;
 
 class TagController
 {
@@ -517,17 +518,10 @@ class TagController
     /** @param array<string, mixed> $row */
     private static function normalizeTagRow(array $row): array
     {
-        foreach (['is_active', 'is_system', 'is_exclusive', 'allow_self_request', 'requires_approval'] as $col) {
-            if (array_key_exists($col, $row)) {
-                $row[$col] = (int) $row[$col];
-            }
-        }
-        if (isset($row['assignment_count'])) {
-            $row['assignment_count'] = (int) $row['assignment_count'];
-        }
-        if (isset($row['pending_request_count'])) {
-            $row['pending_request_count'] = (int) $row['pending_request_count'];
-        }
+        $row = RowNormalizer::flags($row, [
+            'is_active', 'is_system', 'is_exclusive', 'allow_self_request', 'requires_approval',
+            'assignment_count', 'pending_request_count',
+        ]);
 
         return $row;
     }

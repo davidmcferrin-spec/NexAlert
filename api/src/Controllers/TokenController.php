@@ -17,6 +17,7 @@ use NexAlert\Api\Request;
 use NexAlert\Api\Response;
 use NexAlert\Config\Database;
 use NexAlert\Services\AuditService;
+use NexAlert\Services\RowNormalizer;
 
 class TokenController
 {
@@ -64,6 +65,8 @@ class TokenController
              LIMIT ? OFFSET ?",
             array_merge($params, [$limit, $offset])
         );
+
+        $rows = RowNormalizer::mapFlags($rows, ['is_active']);
 
         Response::success([
             'tokens' => $rows,

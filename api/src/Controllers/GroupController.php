@@ -21,6 +21,7 @@ use NexAlert\Api\Request;
 use NexAlert\Api\Response;
 use NexAlert\Config\Database;
 use NexAlert\Services\AuditService;
+use NexAlert\Services\RowNormalizer;
 
 class GroupController
 {
@@ -408,17 +409,7 @@ class GroupController
     /** @param array<string, mixed> $row */
     private static function normalizeGroupRow(array $row): array
     {
-        if (array_key_exists('is_active', $row)) {
-            $row['is_active'] = (int) $row['is_active'];
-        }
-        if (isset($row['member_count'])) {
-            $row['member_count'] = (int) $row['member_count'];
-        }
-        if (isset($row['child_group_count'])) {
-            $row['child_group_count'] = (int) $row['child_group_count'];
-        }
-
-        return $row;
+        return RowNormalizer::flags($row, ['is_active', 'member_count', 'child_group_count']);
     }
 
     /**

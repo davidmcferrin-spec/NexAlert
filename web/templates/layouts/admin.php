@@ -398,6 +398,10 @@ function toasts() {
 // -----------------------------------------------------------------------
 // Global helpers
 // -----------------------------------------------------------------------
+/** MySQL TINYINT arrives as string "0"/"1" — never use bare truthiness in Alpine. */
+function isActive(v) { return Number(v) === 1; }
+function isLocked(v) { return Number(v) === 1; }
+
 function toast(message, type = 'success') {
     window.dispatchEvent(new CustomEvent('toast', { detail: { message, type } }));
 }

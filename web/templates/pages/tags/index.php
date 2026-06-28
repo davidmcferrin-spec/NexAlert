@@ -86,10 +86,10 @@ $headerActions = '
                             </td>
                             <td class="px-5 py-3 text-center">
                                 <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium"
-                                      :class="tag.is_active == 1
+                                      :class="isActive(tag.is_active)
                                           ? 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400'
                                           : 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-500'"
-                                      x-text="tag.is_active == 1 ? 'Active' : 'Inactive'"></span>
+                                      x-text="isActive(tag.is_active) ? 'Active' : 'Inactive'"></span>
                             </td>
                             <td class="px-5 py-3 text-right">
                                 <div class="flex items-center justify-end gap-2 flex-wrap">
@@ -97,10 +97,10 @@ $headerActions = '
                                        class="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">Edit</a>
                                     <button @click="deactivate(tag)"
                                             class="text-xs text-amber-600 hover:text-amber-800 dark:text-amber-400"
-                                            x-show="tag.is_active == 1 && tag.is_system != 1">Deactivate</button>
+                                            x-show="isActive(tag.is_active) && tag.is_system != 1">Deactivate</button>
                                     <button @click="reactivate(tag)"
                                             class="text-xs text-green-600 hover:text-green-800 dark:text-green-400"
-                                            x-show="tag.is_active != 1 && tag.is_system != 1">Reactivate</button>
+                                            x-show="!isActive(tag.is_active) && tag.is_system != 1">Reactivate</button>
                                     <button @click="deleteTag(tag)"
                                             class="text-xs text-red-500 hover:text-red-700"
                                             x-show="tag.is_system != 1">Delete</button>

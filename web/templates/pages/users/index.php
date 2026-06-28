@@ -73,12 +73,12 @@ $headerActions = '
                             <td class="px-5 py-3 text-gray-500 dark:text-gray-400 hidden lg:table-cell" x-text="user.home_node_name || '—'"></td>
                             <td class="px-5 py-3 text-center">
                                 <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium"
-                                      :class="user.is_active
-                                          ? (user.is_locked
+                                      :class="!isActive(user.is_active)
+                                          ? 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-500'
+                                          : (isLocked(user.is_locked)
                                               ? 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/40 dark:text-yellow-400'
-                                              : 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400')
-                                          : 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-500'"
-                                      x-text="!user.is_active ? 'Inactive' : (user.is_locked ? 'Locked' : 'Active')">
+                                              : 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400')"
+                                      x-text="!isActive(user.is_active) ? 'Inactive' : (isLocked(user.is_locked) ? 'Locked' : 'Active')">
                                 </span>
                             </td>
                             <td class="px-5 py-3 text-right">
@@ -87,7 +87,7 @@ $headerActions = '
                                        class="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 transition-colors">Edit</a>
                                     <button @click="deactivate(user)"
                                             class="text-xs text-red-400 hover:text-red-600 transition-colors"
-                                            x-show="user.is_active && user.id !== <?= (int)($_SESSION['user']['id'] ?? 0) ?>">
+                                            x-show="isActive(user.is_active) && user.id !== <?= (int)($_SESSION['user']['id'] ?? 0) ?>">
                                         Deactivate
                                     </button>
                                 </div>
@@ -147,6 +147,8 @@ function usersPage() {
             if (res.ok) {
                 this.users = res.data.data.users;
                 this.total = res.data.data.total;
+            } else {
+                toast(res.data?.error || res.data?.message || 'Failed to load users', 'error');
             }
             this.loading = false;
         },

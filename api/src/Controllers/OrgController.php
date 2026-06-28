@@ -17,6 +17,7 @@ use NexAlert\Api\Request;
 use NexAlert\Api\Response;
 use NexAlert\Config\Database;
 use NexAlert\Services\AuditService;
+use NexAlert\Services\RowNormalizer;
 
 class OrgController
 {
@@ -64,17 +65,18 @@ class OrgController
         $rows = $db->fetchAll(
             "SELECT o.id, o.name, o.slug, o.display_name, o.logo_url,
                     o.primary_color, o.is_active, o.created_at, o.updated_at,
-                    COUNT(DISTINCT u.id) AS user_count,
-                    COUNT(DISTINCT n.id) AS node_count
+                    (SELECT COUNT(*) FROM users u
+                     WHERE u.home_org_id = o.id AND u.is_active = 1) AS user_count,
+                    (SELECT COUNT(*) FROM org_nodes n
+                     WHERE n.org_id = o.id AND n.is_active = 1) AS node_count
              FROM organizations o
-             LEFT JOIN users u ON u.home_org_id = o.id AND u.is_active = 1
-             LEFT JOIN org_nodes n ON n.org_id = o.id AND n.is_active = 1
              WHERE {$whereStr}
-             GROUP BY o.id
-             ORDER BY o.name ASC
+             ORDER BY o.display_name ASC
              LIMIT ? OFFSET ?",
             array_merge($params, [$limit, $offset])
         );
+
+        $rows = RowNormalizer::mapFlags($rows, ['is_active', 'user_count', 'node_count']);
 
         Response::success([
             'orgs'   => $rows,
@@ -157,13 +159,12 @@ class OrgController
 
         $org = $db->fetchOne(
             'SELECT o.*,
-                    COUNT(DISTINCT u.id)  AS user_count,
-                    COUNT(DISTINCT n.id)  AS node_count
+                    (SELECT COUNT(*) FROM users u
+                     WHERE u.home_org_id = o.id AND u.is_active = 1) AS user_count,
+                    (SELECT COUNT(*) FROM org_nodes n
+                     WHERE n.org_id = o.id AND n.is_active = 1) AS node_count
              FROM organizations o
-             LEFT JOIN users u ON u.home_org_id = o.id AND u.is_active = 1
-             LEFT JOIN org_nodes n ON n.org_id = o.id AND n.is_active = 1
-             WHERE o.id = ?
-             GROUP BY o.id',
+             WHERE o.id = ?',
             [$id]
         );
 
@@ -171,11 +172,16 @@ class OrgController
             Response::notFound('Organization not found');
         }
 
+        $org = RowNormalizer::flags($org, ['is_active', 'user_count', 'node_count']);
+
         // Include root nodes
-        $org['nodes'] = $db->fetchAll(
-            'SELECT id, parent_id, node_type, name, slug, path, depth, is_active
-             FROM org_nodes WHERE org_id = ? ORDER BY path ASC',
-            [$id]
+        $org['nodes'] = RowNormalizer::mapFlags(
+            $db->fetchAll(
+                'SELECT id, parent_id, node_type, name, slug, path, depth, is_active
+                 FROM org_nodes WHERE org_id = ? ORDER BY path ASC',
+                [$id]
+            ),
+            ['is_active']
         );
 
         Response::success($org);

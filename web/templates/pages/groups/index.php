@@ -65,10 +65,10 @@ $headerActions = '
                             <td class="px-5 py-3 text-center text-gray-500 dark:text-gray-400 hidden lg:table-cell" x-text="group.child_group_count"></td>
                             <td class="px-5 py-3 text-center">
                                 <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium"
-                                      :class="group.is_active == 1
+                                      :class="isActive(group.is_active)
                                           ? 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400'
                                           : 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-500'"
-                                      x-text="group.is_active == 1 ? 'Active' : 'Inactive'"></span>
+                                      x-text="isActive(group.is_active) ? 'Active' : 'Inactive'"></span>
                             </td>
                             <td class="px-5 py-3 text-right">
                                 <div class="flex items-center justify-end gap-2 flex-wrap">
@@ -76,10 +76,10 @@ $headerActions = '
                                        class="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">Edit</a>
                                     <button @click="deactivate(group)"
                                             class="text-xs text-amber-600 hover:text-amber-800 dark:text-amber-400"
-                                            x-show="group.is_active == 1">Deactivate</button>
+                                            x-show="isActive(group.is_active)">Deactivate</button>
                                     <button @click="reactivate(group)"
                                             class="text-xs text-green-600 hover:text-green-800 dark:text-green-400"
-                                            x-show="group.is_active != 1">Reactivate</button>
+                                            x-show="!isActive(group.is_active)">Reactivate</button>
                                 </div>
                             </td>
                         </tr>
