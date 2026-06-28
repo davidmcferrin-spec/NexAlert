@@ -112,24 +112,11 @@ class NodeController
         $name     = trim((string) $request->input('name'));
         $nodeType = (string) $request->input('node_type');
         $parentId = $request->input('parent_id') !== null ? (int) $request->input('parent_id') : null;
-        $slug     = strtolower(trim((string) $request->input('slug', '')));
+        $slugInput = trim((string) $request->input('slug', ''));
+        $slugProvided = $slugInput !== '';
 
         if (!in_array($nodeType, self::VALID_TYPES, true)) {
             Response::validationError(['node_type' => 'Must be one of: ' . implode(', ', self::VALID_TYPES)]);
-        }
-
-        // Auto-generate slug from name if not provided
-        if ($slug === '') {
-            $slug = self::slugify($name);
-        }
-
-        if (!preg_match('/^[a-z0-9_-]+$/', $slug)) {
-            Response::validationError(['slug' => 'Only lowercase letters, numbers, hyphens, and underscores']);
-        }
-
-        // Validate slug uniqueness within org
-        if ($db->fetchValue('SELECT id FROM org_nodes WHERE org_id = ? AND slug = ?', [$orgId, $slug])) {
-            Response::validationError(['slug' => 'Slug already in use within this organization']);
         }
 
         if ($nodeType === 'org') {
@@ -154,6 +141,18 @@ class NodeController
         }
 
         self::assertValidParentForType($nodeType, $parent);
+
+        if ($slugProvided) {
+            $slug = strtolower($slugInput);
+            if (!preg_match('/^[a-z0-9_-]+$/', $slug)) {
+                Response::validationError(['slug' => 'Only lowercase letters, numbers, hyphens, and underscores']);
+            }
+            if (self::slugExistsUnderParent($db, $orgId, $parentId, $slug)) {
+                Response::validationError(['slug' => 'Slug already in use under this parent node']);
+            }
+        } else {
+            $slug = self::allocateUniqueSlug($db, $orgId, $parentId, self::slugify($name));
+        }
 
         $id = $db->transaction(function (Database $db) use (
             $orgId, $parentId, $nodeType, $name, $slug, $depth, $parentPath, $request
@@ -521,6 +520,51 @@ class NodeController
         $slug = preg_replace('/[^a-z0-9\s_-]/', '', $slug);
         $slug = preg_replace('/[\s]+/', '-', trim($slug));
         return substr($slug, 0, 80);
+    }
+
+    private static function slugExistsUnderParent(
+        Database $db,
+        int $orgId,
+        ?int $parentId,
+        string $slug,
+        ?int $excludeNodeId = null
+    ): bool {
+        $sql    = 'SELECT id FROM org_nodes WHERE org_id = ? AND parent_id <=> ? AND slug = ?';
+        $params = [$orgId, $parentId, $slug];
+
+        if ($excludeNodeId !== null) {
+            $sql     .= ' AND id != ?';
+            $params[] = $excludeNodeId;
+        }
+
+        return (bool) $db->fetchValue($sql, $params);
+    }
+
+    /**
+     * Pick a slug unique among siblings (same org + parent).
+     * Appends -2, -3, … when the base slug is taken.
+     */
+    private static function allocateUniqueSlug(
+        Database $db,
+        int $orgId,
+        ?int $parentId,
+        string $baseSlug
+    ): string {
+        $baseSlug = $baseSlug !== '' ? $baseSlug : 'node';
+
+        if (!self::slugExistsUnderParent($db, $orgId, $parentId, $baseSlug)) {
+            return $baseSlug;
+        }
+
+        for ($n = 2; $n <= 999; $n++) {
+            $suffix = '-' . $n;
+            $slug   = substr($baseSlug, 0, max(1, 80 - strlen($suffix))) . $suffix;
+            if (!self::slugExistsUnderParent($db, $orgId, $parentId, $slug)) {
+                return $slug;
+            }
+        }
+
+        Response::validationError(['slug' => 'Could not generate a unique slug for this node']);
     }
 
     /**
