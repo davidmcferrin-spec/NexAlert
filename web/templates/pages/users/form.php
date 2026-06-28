@@ -37,7 +37,7 @@ if ($isEdit) {
 }
 ?>
 
-<div class="max-w-2xl" x-data="userForm()" x-init="init(<?= $isEdit ? (int)($user['home_org_id'] ?? 0) : 0 ?>)">
+<div class="max-w-3xl" x-data="userForm()" x-init="init(<?= $isEdit ? (int)($user['home_org_id'] ?? 0) : 0 ?>)">
 
     <div class="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 overflow-hidden mb-6">
         <div class="px-6 py-4 border-b border-gray-100 dark:border-gray-800">
@@ -171,9 +171,54 @@ if ($isEdit) {
          x-data="membershipsPanel(<?= $userId ?>)" x-init="load()">
         <div class="flex items-center justify-between px-5 py-4 border-b border-gray-100 dark:border-gray-800">
             <h3 class="text-sm font-semibold text-gray-900 dark:text-white">Org Memberships</h3>
+            <button @click="showAdd = !showAdd"
+                    class="text-xs font-semibold text-red-600 hover:text-red-700 dark:text-red-400">
+                <span x-text="showAdd ? 'Cancel' : '+ Add Membership'"></span>
+            </button>
         </div>
+
+        <div x-show="showAdd" x-cloak class="px-5 py-4 border-b border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/40 space-y-3">
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Organization</label>
+                    <select x-model="newMembership.org_id" @change="loadMembershipNodes()"
+                            class="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-gray-700
+                                   bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-red-500">
+                        <option value="">Select org…</option>
+                        <?php foreach ($orgs as $o): ?>
+                        <option value="<?= (int) $o['id'] ?>"><?= htmlspecialchars($o['display_name']) ?></option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Org Node</label>
+                    <select x-model="newMembership.org_node_id"
+                            :disabled="!newMembership.org_id || nodesLoading"
+                            class="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-gray-700
+                                   bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-red-500 disabled:opacity-50">
+                        <option value="">Select node…</option>
+                        <template x-for="node in membershipNodes" :key="node.id">
+                            <option :value="node.id"
+                                    x-text="'　'.repeat(node.depth) + node.name + ' (' + node.node_type + ')'"></option>
+                        </template>
+                    </select>
+                </div>
+            </div>
+            <div>
+                <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Position Title (optional)</label>
+                <input type="text" x-model="newMembership.position_title" placeholder="e.g. Chief Engineer"
+                       class="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-gray-700
+                              bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-red-500">
+            </div>
+            <button @click="addMembership()" :disabled="!newMembership.org_id || !newMembership.org_node_id"
+                    class="px-4 py-2 text-sm font-semibold bg-red-600 hover:bg-red-700 disabled:opacity-50
+                           text-white rounded-lg transition-colors">
+                Add Membership
+            </button>
+        </div>
+
         <div class="divide-y divide-gray-100 dark:divide-gray-800">
-            <template x-for="m in memberships" :key="m.id">
+            <template x-for="m in activeMemberships" :key="m.id">
                 <div class="flex items-center justify-between px-5 py-3">
                     <div>
                         <div class="text-sm font-medium text-gray-900 dark:text-white" x-text="m.org_name + ' → ' + m.node_name"></div>
@@ -183,7 +228,7 @@ if ($isEdit) {
                             class="text-xs text-red-400 hover:text-red-600 transition-colors">Remove</button>
                 </div>
             </template>
-            <div x-show="memberships.length === 0" class="px-5 py-4 text-sm text-gray-400">No additional memberships.</div>
+            <div x-show="activeMemberships.length === 0" class="px-5 py-4 text-sm text-gray-400">No org node memberships.</div>
         </div>
     </div>
 
@@ -192,16 +237,42 @@ if ($isEdit) {
          x-data="tagsPanel(<?= $userId ?>)" x-init="load()">
         <div class="flex items-center justify-between px-5 py-4 border-b border-gray-100 dark:border-gray-800">
             <h3 class="text-sm font-semibold text-gray-900 dark:text-white">Tags</h3>
+            <button @click="showAdd = !showAdd"
+                    class="text-xs font-semibold text-red-600 hover:text-red-700 dark:text-red-400">
+                <span x-text="showAdd ? 'Cancel' : '+ Assign Tag'"></span>
+            </button>
         </div>
+
+        <div x-show="showAdd" x-cloak class="px-5 py-4 border-b border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/40">
+            <div class="flex gap-2">
+                <select x-model="selectedTagId"
+                        class="flex-1 px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-gray-700
+                               bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-red-500">
+                    <option value="">Select a tag…</option>
+                    <template x-for="t in availableTags" :key="t.id">
+                        <option :value="t.id" x-text="t.name + (t.is_exclusive == 1 ? ' (exclusive)' : '')"></option>
+                    </template>
+                </select>
+                <button @click="assignTag()" :disabled="!selectedTagId"
+                        class="px-4 py-2 text-sm font-semibold bg-red-600 hover:bg-red-700 disabled:opacity-50
+                               text-white rounded-lg transition-colors">
+                    Assign
+                </button>
+            </div>
+            <p x-show="availableTags.length === 0" class="text-xs text-gray-400 mt-2">No assignable tags found.</p>
+        </div>
+
         <div class="px-5 py-4">
-            <div class="flex flex-wrap gap-2 mb-4">
+            <div class="flex flex-wrap gap-2">
                 <template x-for="t in tags" :key="t.tag_id">
                     <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium"
                           :class="t.is_system
                             ? 'bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
-                            : 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300'">
+                            : 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300'"
+                          :title="assignmentLabel(t)">
                         <span x-text="t.name"></span>
-                        <button x-show="!t.is_system" @click="removeTag(t)"
+                        <span class="opacity-60 text-[10px] uppercase" x-text="t.assignment_type.replace('_', ' ')"></span>
+                        <button x-show="t.assignment_type === 'manual'" @click="removeTag(t)"
                                 class="opacity-60 hover:opacity-100 transition-opacity">✕</button>
                     </span>
                 </template>
@@ -236,10 +307,53 @@ function userForm() {
 function membershipsPanel(userId) {
     return {
         memberships: [],
+        membershipNodes: [],
+        nodesLoading: false,
+        showAdd: false,
+        newMembership: { org_id: '', org_node_id: '', position_title: '' },
+
+        get activeMemberships() {
+            return this.memberships.filter(m => m.is_active == 1);
+        },
+
         async load() {
             const res = await api.get(`/users/${userId}/memberships`);
             if (res.ok) this.memberships = res.data.data.memberships;
         },
+
+        async loadMembershipNodes() {
+            this.newMembership.org_node_id = '';
+            this.membershipNodes = [];
+            if (!this.newMembership.org_id) return;
+            this.nodesLoading = true;
+            const res = await api.get(`/orgs/${this.newMembership.org_id}/nodes`);
+            if (res.ok) this.membershipNodes = res.data.data.nodes;
+            this.nodesLoading = false;
+        },
+
+        async addMembership() {
+            const body = {
+                org_id: parseInt(this.newMembership.org_id, 10),
+                org_node_id: parseInt(this.newMembership.org_node_id, 10),
+            };
+            if (this.newMembership.position_title.trim()) {
+                body.position_title = this.newMembership.position_title.trim();
+            }
+            const res = await api.post(`/users/${userId}/memberships`, body);
+            if (res.ok) {
+                toast('Membership added');
+                this.showAdd = false;
+                this.newMembership = { org_id: '', org_node_id: '', position_title: '' };
+                this.membershipNodes = [];
+                await this.load();
+            } else {
+                const err = res.data.errors
+                    ? Object.values(res.data.errors).join(' ')
+                    : (res.data.error || 'Failed to add membership');
+                toast(err, 'error');
+            }
+        },
+
         async remove(m) {
             if (!confirm(`Remove membership in ${m.node_name}?`)) return;
             const res = await api.delete(`/users/${userId}/memberships/${m.id}`);
@@ -252,11 +366,43 @@ function membershipsPanel(userId) {
 function tagsPanel(userId) {
     return {
         tags: [],
+        availableTags: [],
+        selectedTagId: '',
+        showAdd: false,
+
         async load() {
             const res = await api.get(`/users/${userId}/tags`);
             if (res.ok) this.tags = res.data.data.tags;
+            await this.loadAvailableTags();
         },
+
+        async loadAvailableTags() {
+            const res = await api.get('/tags?assignable=1&limit=200&active=1');
+            if (!res.ok) return;
+            const assigned = new Set(this.tags.map(t => t.tag_id));
+            this.availableTags = res.data.data.tags.filter(t => !assigned.has(t.id));
+        },
+
+        assignmentLabel(t) {
+            if (t.source_node_name) return `From node: ${t.source_node_name}`;
+            return t.assignment_type;
+        },
+
+        async assignTag() {
+            if (!this.selectedTagId) return;
+            const res = await api.post(`/users/${userId}/tags`, { tag_id: parseInt(this.selectedTagId, 10) });
+            if (res.ok) {
+                toast('Tag assigned');
+                this.selectedTagId = '';
+                this.showAdd = false;
+                await this.load();
+            } else {
+                toast(res.data.error || 'Failed to assign tag', 'error');
+            }
+        },
+
         async removeTag(t) {
+            if (!confirm(`Remove manual tag "${t.name}"?`)) return;
             const res = await api.delete(`/users/${userId}/tags/${t.tag_id}`);
             if (res.ok) { toast('Tag removed'); await this.load(); }
             else toast(res.data.error || 'Failed', 'error');

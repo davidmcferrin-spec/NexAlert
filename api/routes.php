@@ -14,6 +14,7 @@ use NexAlert\Controllers\UserController;
 use NexAlert\Controllers\GroupController;
 use NexAlert\Controllers\TokenController;
 use NexAlert\Controllers\AuditController;
+use NexAlert\Controllers\TagController;
 use NexAlert\Middleware\AuthMiddleware;
 use NexAlert\Middleware\RateLimitMiddleware;
 
@@ -104,6 +105,21 @@ return function (Router $router): void {
         $r->get('/{id:\d+}',    [TokenController::class, 'get'],    [AuthMiddleware::withPermission('system.token.manage')]);
         $r->put('/{id:\d+}',    [TokenController::class, 'update'], [AuthMiddleware::withPermission('system.token.manage')]);
         $r->delete('/{id:\d+}', [TokenController::class, 'delete'], [AuthMiddleware::withPermission('system.token.manage')]);
+    });
+
+    // -----------------------------------------------------------------------
+    // Tags
+    // -----------------------------------------------------------------------
+    $router->group('/api/v1/tags', function (Router $r): void {
+        $r->get('/',              [TagController::class, 'list'],   [AuthMiddleware::withPermission('tag.view')]);
+        $r->post('/',             [TagController::class, 'create'], [AuthMiddleware::withPermission('tag.manage')]);
+        $r->get('/{id:\d+}',     [TagController::class, 'get'],    [AuthMiddleware::withPermission('tag.view')]);
+        $r->put('/{id:\d+}',     [TagController::class, 'update'], [AuthMiddleware::withPermission('tag.manage')]);
+        $r->delete('/{id:\d+}',  [TagController::class, 'delete'], [AuthMiddleware::withPermission('tag.manage')]);
+
+        $r->get('/{id:\d+}/requests',                        [TagController::class, 'listRequests'],    [AuthMiddleware::withPermission('tag.view')]);
+        $r->post('/{id:\d+}/requests/{rid:\d+}/approve',    [TagController::class, 'approveRequest'],  [AuthMiddleware::required()]);
+        $r->post('/{id:\d+}/requests/{rid:\d+}/deny',       [TagController::class, 'denyRequest'],     [AuthMiddleware::required()]);
     });
 
     // -----------------------------------------------------------------------
