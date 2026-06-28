@@ -1,4 +1,3 @@
-# NexAlert - Root .htaccess
 Options -Indexes
 Options -MultiViews
 
@@ -12,13 +11,14 @@ RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
 # Block dotfiles except .well-known
 RewriteRule ^\.(?!well-known) - [F,L]
 
-# Block direct access to source directories (but NOT api/ - that's routed below)
+# Block direct access to source directories
 RewriteRule ^(workers/|config/|db/|tests/|docs/) - [F,L]
 
-# Route /api/* to index.php
-RewriteRule ^api/(.*)$ index.php [L,QSA]
+# Route ALL /api/* to index.php (with or without trailing path)
+RewriteCond %{REQUEST_URI} ^/api
+RewriteRule .* index.php [L,QSA]
 
-# Route everything else to app.php (skip real files/dirs)
+# Route everything else to app.php
 RewriteCond %{REQUEST_FILENAME} !-f
 RewriteCond %{REQUEST_FILENAME} !-d
 RewriteRule ^(.*)$ app.php [L,QSA]
@@ -28,3 +28,7 @@ RewriteRule ^(.*)$ app.php [L,QSA]
     Header always set X-Frame-Options "SAMEORIGIN"
     Header always set Referrer-Policy "strict-origin-when-cross-origin"
 </IfModule>
+
+# Dreamhost strips Authorization header by default - pass it through to PHP
+RewriteCond %{HTTP:Authorization} .
+RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
