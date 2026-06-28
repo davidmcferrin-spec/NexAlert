@@ -15,6 +15,7 @@ use NexAlert\Controllers\GroupController;
 use NexAlert\Controllers\TokenController;
 use NexAlert\Controllers\AuditController;
 use NexAlert\Controllers\TagController;
+use NexAlert\Controllers\TargetController;
 use NexAlert\Middleware\AuthMiddleware;
 use NexAlert\Middleware\RateLimitMiddleware;
 
@@ -112,14 +113,23 @@ return function (Router $router): void {
     // -----------------------------------------------------------------------
     $router->group('/api/v1/tags', function (Router $r): void {
         $r->get('/',              [TagController::class, 'list'],   [AuthMiddleware::required()]);
-        $r->post('/',             [TagController::class, 'create'], [AuthMiddleware::withPermission('tag.manage')]);
+        $r->post('/',             [TagController::class, 'create'], [AuthMiddleware::required()]);
+        $r->get('/{id:\d+}/usage', [TagController::class, 'usage'], [AuthMiddleware::required()]);
         $r->get('/{id:\d+}',     [TagController::class, 'get'],    [AuthMiddleware::required()]);
-        $r->put('/{id:\d+}',     [TagController::class, 'update'], [AuthMiddleware::withPermission('tag.manage')]);
-        $r->delete('/{id:\d+}',  [TagController::class, 'delete'], [AuthMiddleware::withPermission('tag.manage')]);
+        $r->put('/{id:\d+}',     [TagController::class, 'update'], [AuthMiddleware::required()]);
+        $r->delete('/{id:\d+}',  [TagController::class, 'delete'], [AuthMiddleware::required()]);
 
         $r->get('/{id:\d+}/requests',                        [TagController::class, 'listRequests'],    [AuthMiddleware::required()]);
         $r->post('/{id:\d+}/requests/{rid:\d+}/approve',    [TagController::class, 'approveRequest'],  [AuthMiddleware::required()]);
         $r->post('/{id:\d+}/requests/{rid:\d+}/deny',       [TagController::class, 'denyRequest'],     [AuthMiddleware::required()]);
+    });
+
+    // -----------------------------------------------------------------------
+    // Target preview (Test Send)
+    // -----------------------------------------------------------------------
+    $router->group('/api/v1/targets', function (Router $r): void {
+        $r->post('/preview',  [TargetController::class, 'preview'],  [AuthMiddleware::required()]);
+        $r->get('/entities',  [TargetController::class, 'entities'], [AuthMiddleware::required()]);
     });
 
     // -----------------------------------------------------------------------

@@ -67,19 +67,20 @@ class GroupController
         $rows = $db->fetchAll(
             "SELECT g.id, g.owner_org_id, g.name, g.slug, g.description, g.is_active,
                     g.created_at, g.updated_at,
-                    o.name AS owner_org_name,
-                    COUNT(DISTINCT gm.user_id) AS member_count,
-                    COUNT(DISTINCT gc.child_group_id) AS child_group_count
+                    o.display_name AS owner_org_name,
+                    (SELECT COUNT(*) FROM group_memberships gm
+                     WHERE gm.group_id = g.id AND gm.is_active = 1) AS member_count,
+                    (SELECT COUNT(*) FROM group_children gc
+                     WHERE gc.parent_group_id = g.id) AS child_group_count
              FROM `groups` g
-             JOIN organizations o ON o.id = g.owner_org_id
-             LEFT JOIN group_memberships gm ON gm.group_id = g.id AND gm.is_active = 1
-             LEFT JOIN group_children gc ON gc.parent_group_id = g.id
+             LEFT JOIN organizations o ON o.id = g.owner_org_id
              WHERE {$whereStr}
-             GROUP BY g.id
              ORDER BY g.name ASC
              LIMIT ? OFFSET ?",
             array_merge($params, [$limit, $offset])
         );
+
+        $rows = array_map([self::class, 'normalizeGroupRow'], $rows);
 
         Response::success([
             'groups' => $rows,
@@ -176,8 +177,14 @@ class GroupController
             : $group['description'];
 
         $db->execute(
-            'UPDATE `groups` SET name = ?, description = ? WHERE id = ?',
-            [$name, $description, $id]
+            'UPDATE `groups` SET name = ?, description = ?' .
+            ($request->input('is_active') !== null
+                ? ', is_active = ?'
+                : '') .
+            ' WHERE id = ?',
+            $request->input('is_active') !== null
+                ? [$name, $description, (bool) $request->input('is_active') ? 1 : 0, $id]
+                : [$name, $description, $id]
         );
 
         AuditService::log('group.updated', 'group', (string) $id, [
@@ -356,9 +363,9 @@ class GroupController
     private static function fetchGroupDetail(Database $db, int $id): ?array
     {
         $group = $db->fetchOne(
-            'SELECT g.*, o.name AS owner_org_name
+            'SELECT g.*, o.display_name AS owner_org_name
              FROM `groups` g
-             JOIN organizations o ON o.id = g.owner_org_id
+             LEFT JOIN organizations o ON o.id = g.owner_org_id
              WHERE g.id = ?',
             [$id]
         );
@@ -395,7 +402,23 @@ class GroupController
             [$id]
         );
 
-        return $group;
+        return self::normalizeGroupRow($group);
+    }
+
+    /** @param array<string, mixed> $row */
+    private static function normalizeGroupRow(array $row): array
+    {
+        if (array_key_exists('is_active', $row)) {
+            $row['is_active'] = (int) $row['is_active'];
+        }
+        if (isset($row['member_count'])) {
+            $row['member_count'] = (int) $row['member_count'];
+        }
+        if (isset($row['child_group_count'])) {
+            $row['child_group_count'] = (int) $row['child_group_count'];
+        }
+
+        return $row;
     }
 
     /**

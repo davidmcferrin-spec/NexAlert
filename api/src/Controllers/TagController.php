@@ -6,7 +6,8 @@
  * POST   /api/v1/tags                                    → create tag
  * GET    /api/v1/tags/{id}                               → get tag detail
  * PUT    /api/v1/tags/{id}                               → update tag
- * DELETE /api/v1/tags/{id}                               → deactivate tag
+ * DELETE /api/v1/tags/{id}                               → deactivate (soft) or ?hard=1&force=1 permanent delete
+ * GET    /api/v1/tags/{id}/usage                         → usage counts before delete
  * GET    /api/v1/tags/{id}/requests                      → list approval requests
  * POST   /api/v1/tags/{id}/requests/{rid}/approve         → approve request
  * POST   /api/v1/tags/{id}/requests/{rid}/deny            → deny request
@@ -49,7 +50,10 @@ class TagController
             $params[] = $orgId;
         }
 
-        if ($active !== 'all') {
+        if ($assignable) {
+            $where[] = 't.is_system = 0';
+            $where[] = 't.is_active = 1';
+        } elseif ($active !== 'all') {
             $where[]  = 't.is_active = ?';
             $params[] = $active === '0' ? 0 : 1;
         }
@@ -58,10 +62,6 @@ class TagController
             $where[] = 't.is_system = 1';
         } elseif ($system === '0') {
             $where[] = 't.is_system = 0';
-        }
-
-        if ($assignable) {
-            $where[] = 't.is_system = 0 AND t.is_active = 1';
         }
 
         if ($search !== '') {
@@ -94,6 +94,8 @@ class TagController
             array_merge($params, [$limit, $offset])
         );
 
+        $rows = array_map([self::class, 'normalizeTagRow'], $rows);
+
         Response::success([
             'tags'   => $rows,
             'total'  => $total,
@@ -122,6 +124,8 @@ class TagController
         if ($ownerOrgId !== null) {
             self::assertOrgAccess($request, $ownerOrgId);
         }
+
+        self::assertTagManage($request);
 
         if ($isExclusive) {
             self::assertExclusivePermission($request);
@@ -230,6 +234,7 @@ class TagController
         $db = Database::getInstance();
 
         self::assertTagAccess($request, $id, $db);
+        self::assertTagManage($request);
 
         $tag = $db->fetchOne('SELECT * FROM tags WHERE id = ?', [$id]);
         if (!$tag) {
@@ -261,16 +266,24 @@ class TagController
             self::assertExclusivePermission($request);
         }
 
+        $sets    = ['name = ?', 'description = ?', 'is_exclusive = ?', 'tag_admin_id = ?',
+                    'allow_self_request = ?', 'requires_approval = ?'];
+        $params  = [
+            $name, $description,
+            $isExclusive ? 1 : 0, $tagAdminId,
+            $allowSelfRequest ? 1 : 0, $requiresApproval ? 1 : 0,
+        ];
+
+        if ($request->input('is_active') !== null) {
+            $sets[]   = 'is_active = ?';
+            $params[] = (bool) $request->input('is_active') ? 1 : 0;
+        }
+
+        $params[] = $id;
+
         $db->execute(
-            'UPDATE tags SET name = ?, description = ?, is_exclusive = ?, tag_admin_id = ?,
-                             allow_self_request = ?, requires_approval = ?
-             WHERE id = ?',
-            [
-                $name, $description,
-                $isExclusive ? 1 : 0, $tagAdminId,
-                $allowSelfRequest ? 1 : 0, $requiresApproval ? 1 : 0,
-                $id,
-            ]
+            'UPDATE tags SET ' . implode(', ', $sets) . ' WHERE id = ?',
+            $params
         );
 
         AuditService::log('tag.updated', 'tag', (string) $id, [
@@ -281,27 +294,67 @@ class TagController
         Response::success(self::fetchTagDetail($db, $id), 'Tag updated');
     }
 
-    public static function delete(Request $request): never
+    public static function usage(Request $request): never
     {
         $id = (int) $request->param('id');
         $db = Database::getInstance();
 
         self::assertTagAccess($request, $id, $db);
 
-        $tag = $db->fetchOne('SELECT id, is_system FROM tags WHERE id = ?', [$id]);
+        $tag = $db->fetchOne('SELECT id, name FROM tags WHERE id = ?', [$id]);
+        if (!$tag) {
+            Response::notFound('Tag not found');
+        }
+
+        Response::success(self::tagUsage($db, $id));
+    }
+
+    public static function delete(Request $request): never
+    {
+        $id    = (int) $request->param('id');
+        $hard  = $request->query('hard') === '1';
+        $force = $request->query('force') === '1';
+        $db    = Database::getInstance();
+
+        self::assertTagAccess($request, $id, $db);
+        self::assertTagManage($request);
+
+        $tag = $db->fetchOne('SELECT id, name, is_system, is_active FROM tags WHERE id = ?', [$id]);
         if (!$tag) {
             Response::notFound('Tag not found');
         }
 
         if ((int) $tag['is_system'] === 1) {
-            Response::error('System tags cannot be deactivated', 409);
+            Response::error($hard ? 'System tags cannot be deleted' : 'System tags cannot be deactivated', 409);
         }
 
-        $db->execute('UPDATE tags SET is_active = 0 WHERE id = ?', [$id]);
+        if (!$hard) {
+            $db->execute('UPDATE tags SET is_active = 0 WHERE id = ?', [$id]);
+            AuditService::log('tag.deactivated', 'tag', (string) $id, [], $request->user['uid']);
+            Response::success(null, 'Tag deactivated');
+        }
 
-        AuditService::log('tag.deactivated', 'tag', (string) $id, [], $request->user['uid']);
+        $usage = self::tagUsage($db, $id);
+        if ($usage['total'] > 0 && !$force) {
+            Response::json([
+                'success' => false,
+                'error'   => 'Tag is in use',
+                'usage'   => $usage,
+            ], 409);
+        }
 
-        Response::success(null, 'Tag deactivated');
+        $db->transaction(function (Database $db) use ($id): void {
+            $db->execute('UPDATE tag_assignments SET is_active = 0 WHERE tag_id = ?', [$id]);
+            $db->execute('DELETE FROM tags WHERE id = ?', [$id]);
+        });
+
+        AuditService::log('tag.deleted', 'tag', (string) $id, [
+            'name'  => $tag['name'],
+            'force' => $force,
+            'usage' => $usage,
+        ], $request->user['uid']);
+
+        Response::success(null, 'Tag permanently deleted');
     }
 
     public static function listRequests(Request $request): never
@@ -432,7 +485,76 @@ class TagController
             [$id]
         );
 
-        return $tag;
+        return self::normalizeTagRow($tag);
+    }
+
+    /**
+     * @return array{assignments: int, alert_targets: int, pending_requests: int, total: int}
+     */
+    private static function tagUsage(Database $db, int $tagId): array
+    {
+        $assignments = (int) $db->fetchValue(
+            'SELECT COUNT(*) FROM tag_assignments WHERE tag_id = ? AND is_active = 1',
+            [$tagId]
+        );
+        $alertTargets = (int) $db->fetchValue(
+            'SELECT COUNT(*) FROM alert_targets WHERE target_tag_id = ?',
+            [$tagId]
+        );
+        $pendingRequests = (int) $db->fetchValue(
+            "SELECT COUNT(*) FROM tag_approval_requests WHERE tag_id = ? AND status = 'pending'",
+            [$tagId]
+        );
+
+        return [
+            'assignments'      => $assignments,
+            'alert_targets'    => $alertTargets,
+            'pending_requests' => $pendingRequests,
+            'total'            => $assignments + $alertTargets + $pendingRequests,
+        ];
+    }
+
+    /** @param array<string, mixed> $row */
+    private static function normalizeTagRow(array $row): array
+    {
+        foreach (['is_active', 'is_system', 'is_exclusive', 'allow_self_request', 'requires_approval'] as $col) {
+            if (array_key_exists($col, $row)) {
+                $row[$col] = (int) $row[$col];
+            }
+        }
+        if (isset($row['assignment_count'])) {
+            $row['assignment_count'] = (int) $row['assignment_count'];
+        }
+        if (isset($row['pending_request_count'])) {
+            $row['pending_request_count'] = (int) $row['pending_request_count'];
+        }
+
+        return $row;
+    }
+
+    private static function assertTagManage(Request $request): void
+    {
+        if (in_array('super_admin', $request->user['roles'] ?? [], true)) {
+            return;
+        }
+
+        $db = Database::getInstance();
+        $granted = (int) $db->fetchValue(
+            'SELECT COUNT(*)
+             FROM user_roles ur
+             JOIN role_permissions rp ON rp.role_id = ur.role_id
+             JOIN permissions p ON p.id = rp.permission_id
+             WHERE ur.user_id = ?
+               AND p.name IN (\'tag.manage\', \'tag.manage_exclusive\')
+               AND (ur.expires_at IS NULL OR ur.expires_at > NOW())',
+            [$request->user['uid']]
+        );
+
+        if ($granted > 0) {
+            return;
+        }
+
+        Response::forbidden('Tag management permission required');
     }
 
     private static function assertTagAccess(Request $request, int $tagId, Database $db): void

@@ -86,18 +86,24 @@ $headerActions = '
                             </td>
                             <td class="px-5 py-3 text-center">
                                 <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium"
-                                      :class="tag.is_active
+                                      :class="tag.is_active == 1
                                           ? 'bg-green-100 text-green-700 dark:bg-green-900/40 dark:text-green-400'
                                           : 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-500'"
-                                      x-text="tag.is_active ? 'Active' : 'Inactive'"></span>
+                                      x-text="tag.is_active == 1 ? 'Active' : 'Inactive'"></span>
                             </td>
                             <td class="px-5 py-3 text-right">
-                                <div class="flex items-center justify-end gap-3">
+                                <div class="flex items-center justify-end gap-2 flex-wrap">
                                     <a :href="'/admin/tags/edit?id=' + tag.id"
                                        class="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">Edit</a>
                                     <button @click="deactivate(tag)"
-                                            class="text-xs text-red-400 hover:text-red-600"
-                                            x-show="tag.is_active && tag.is_system != 1">Deactivate</button>
+                                            class="text-xs text-amber-600 hover:text-amber-800 dark:text-amber-400"
+                                            x-show="tag.is_active == 1 && tag.is_system != 1">Deactivate</button>
+                                    <button @click="reactivate(tag)"
+                                            class="text-xs text-green-600 hover:text-green-800 dark:text-green-400"
+                                            x-show="tag.is_active != 1 && tag.is_system != 1">Reactivate</button>
+                                    <button @click="deleteTag(tag)"
+                                            class="text-xs text-red-500 hover:text-red-700"
+                                            x-show="tag.is_system != 1">Delete</button>
                                 </div>
                             </td>
                         </tr>
@@ -124,6 +130,38 @@ $headerActions = '
             </div>
         </div>
     </div>
+
+    <!-- In-use warning before force delete -->
+    <div x-show="pendingDelete" x-cloak
+         class="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50"
+         @keydown.escape.window="pendingDelete = null">
+        <div class="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700
+                    shadow-xl max-w-md w-full p-6" @click.outside="pendingDelete = null">
+            <h3 class="text-lg font-semibold text-gray-900 dark:text-white mb-2">Tag in use</h3>
+            <p class="text-sm text-gray-600 dark:text-gray-400 mb-4">
+                <span x-text="pendingDelete?.tag?.name"></span> is still referenced. Delete anyway?
+            </p>
+            <ul class="text-sm text-gray-600 dark:text-gray-400 space-y-1 mb-6" x-show="pendingDelete?.usage">
+                <li x-show="pendingDelete.usage.assignments > 0">
+                    <span x-text="pendingDelete.usage.assignments"></span> user assignment(s)
+                </li>
+                <li x-show="pendingDelete.usage.alert_targets > 0">
+                    <span x-text="pendingDelete.usage.alert_targets"></span> alert target(s)
+                </li>
+                <li x-show="pendingDelete.usage.pending_requests > 0">
+                    <span x-text="pendingDelete.usage.pending_requests"></span> pending approval request(s)
+                </li>
+            </ul>
+            <div class="flex justify-end gap-3">
+                <button @click="pendingDelete = null"
+                        class="px-4 py-2 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900">Cancel</button>
+                <button @click="confirmForceDelete()"
+                        class="px-4 py-2 text-sm font-semibold bg-red-600 hover:bg-red-700 text-white rounded-xl">
+                    Delete anyway
+                </button>
+            </div>
+        </div>
+    </div>
 </div>
 
 <script>
@@ -132,6 +170,7 @@ function tagsPage() {
         tags: [], total: 0, loading: true,
         search: '', filterActive: '1', filterSystem: 'all',
         limit: 50, offset: 0,
+        pendingDelete: null,
 
         async init()     { await this.loadTags(); },
         async prevPage() { this.offset = Math.max(0, this.offset - this.limit); await this.loadTags(); },
@@ -155,14 +194,47 @@ function tagsPage() {
         },
 
         async deactivate(tag) {
-            if (!confirm(`Deactivate tag "${tag.name}"?`)) return;
+            if (!confirm(`Deactivate tag "${tag.name}"? Assigned users keep the assignment but the tag won't appear in assignable lists.`)) return;
             const res = await api.delete(`/tags/${tag.id}`);
             if (res.ok) {
                 toast(`${tag.name} deactivated`);
                 await this.loadTags();
             } else {
-                toast(res.data.error || 'Failed', 'error');
+                toast(res.data?.error || 'Failed to deactivate', 'error');
             }
+        },
+
+        async reactivate(tag) {
+            const res = await api.put(`/tags/${tag.id}`, { is_active: 1 });
+            if (res.ok) {
+                toast(`${tag.name} reactivated`);
+                await this.loadTags();
+            } else {
+                toast(res.data?.error || 'Failed to reactivate', 'error');
+            }
+        },
+
+        async deleteTag(tag, force = false) {
+            if (!force && !confirm(`Permanently delete "${tag.name}"? This cannot be undone.`)) return;
+            const params = new URLSearchParams({ hard: '1' });
+            if (force) params.set('force', '1');
+            const res = await api.delete(`/tags/${tag.id}?${params}`);
+            if (!res.ok) {
+                if (res.status === 409 && res.data?.usage) {
+                    this.pendingDelete = { tag, usage: res.data.usage };
+                    return;
+                }
+                toast(res.data?.error || 'Delete failed', 'error');
+                return;
+            }
+            toast(`${tag.name} permanently deleted`);
+            this.pendingDelete = null;
+            await this.loadTags();
+        },
+
+        async confirmForceDelete() {
+            if (!this.pendingDelete) return;
+            await this.deleteTag(this.pendingDelete.tag, true);
         }
     };
 }

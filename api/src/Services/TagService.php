@@ -153,59 +153,70 @@ class TagService
         $userIds = [];
 
         foreach ($targets as $target) {
-            $sql    = 'SELECT DISTINCT u.id FROM users u WHERE u.is_active = 1';
-            $params = [];
-
-            if (!empty($target['target_user_id'])) {
-                // Direct individual target — short circuit
-                $userIds[] = (int) $target['target_user_id'];
-                continue;
-            }
-
-            if (!empty($target['target_org_id'])) {
-                $sql    .= ' AND u.home_org_id = ?';
-                $params[] = $target['target_org_id'];
-            }
-
-            if (!empty($target['target_node_id'])) {
-                // Match users in this node's subtree via materialized path
-                $node = $db->fetchOne('SELECT path FROM org_nodes WHERE id = ?', [$target['target_node_id']]);
-                if ($node) {
-                    $sql    .= ' AND EXISTS (
-                        SELECT 1 FROM user_org_memberships m
-                        JOIN org_nodes n ON n.id = m.org_node_id
-                        WHERE m.user_id = u.id AND m.is_active = 1
-                          AND n.path LIKE ?
-                    )';
-                    $params[] = $node['path'] . '%';
-                }
-            }
-
-            if (!empty($target['target_tag_id'])) {
-                $sql    .= ' AND EXISTS (
-                    SELECT 1 FROM tag_assignments ta
-                    WHERE ta.user_id = u.id AND ta.tag_id = ? AND ta.is_active = 1
-                )';
-                $params[] = $target['target_tag_id'];
-            }
-
-            if (!empty($target['target_group_id'])) {
-                // Resolve group members recursively
-                $groupUserIds = self::resolveGroupMembers($db, (int) $target['target_group_id']);
-                if (!empty($groupUserIds)) {
-                    [$placeholders, $params] = $db->inClause($groupUserIds, $params);
-                    $sql .= " AND u.id IN ({$placeholders})";
-                } else {
-                    continue; // Empty group contributes no users
-                }
-            }
-
-            $rows    = $db->fetchAll($sql, $params);
-            $userIds = array_merge($userIds, array_column($rows, 'id'));
+            $userIds = array_merge($userIds, self::resolveTargetRow($db, $target));
         }
 
-        // Deduplicate and cast to int
         return array_values(array_unique(array_map('intval', $userIds)));
+    }
+
+    /**
+     * Resolve a single alert_targets row to user IDs.
+     *
+     * @return int[]
+     */
+    public static function resolveTargetRow(Database $db, array $target): array
+    {
+        if (!empty($target['target_user_id'])) {
+            $uid = (int) $target['target_user_id'];
+            $active = (int) $db->fetchValue(
+                'SELECT COUNT(*) FROM users WHERE id = ? AND is_active = 1',
+                [$uid]
+            );
+
+            return $active > 0 ? [$uid] : [];
+        }
+
+        $sql    = 'SELECT DISTINCT u.id FROM users u WHERE u.is_active = 1';
+        $params = [];
+
+        if (!empty($target['target_org_id'])) {
+            $sql     .= ' AND u.home_org_id = ?';
+            $params[] = $target['target_org_id'];
+        }
+
+        if (!empty($target['target_node_id'])) {
+            $node = $db->fetchOne('SELECT path FROM org_nodes WHERE id = ?', [$target['target_node_id']]);
+            if ($node) {
+                $sql     .= ' AND EXISTS (
+                    SELECT 1 FROM user_org_memberships m
+                    JOIN org_nodes n ON n.id = m.org_node_id
+                    WHERE m.user_id = u.id AND m.is_active = 1
+                      AND n.path LIKE ?
+                )';
+                $params[] = $node['path'] . '%';
+            }
+        }
+
+        if (!empty($target['target_tag_id'])) {
+            $sql     .= ' AND EXISTS (
+                SELECT 1 FROM tag_assignments ta
+                WHERE ta.user_id = u.id AND ta.tag_id = ? AND ta.is_active = 1
+            )';
+            $params[] = $target['target_tag_id'];
+        }
+
+        if (!empty($target['target_group_id'])) {
+            $groupUserIds = self::resolveGroupMembers($db, (int) $target['target_group_id']);
+            if (empty($groupUserIds)) {
+                return [];
+            }
+            [$placeholders, $params] = $db->inClause($groupUserIds, $params);
+            $sql .= " AND u.id IN ({$placeholders})";
+        }
+
+        $rows = $db->fetchAll($sql, $params);
+
+        return array_map('intval', array_column($rows, 'id'));
     }
 
     /**

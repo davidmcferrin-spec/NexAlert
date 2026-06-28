@@ -95,6 +95,7 @@ $routes = [
         '/admin/tags'             => 'tags/index',
         '/admin/tags/new'         => 'tags/form',
         '/admin/tags/edit'        => 'tags/form',
+        '/admin/test-send'        => 'test-send/index',
         '/admin/tokens'           => 'tokens/index',
         '/admin/tokens/new'       => 'tokens/form',
         '/admin/tokens/edit'      => 'tokens/form',

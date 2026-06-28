@@ -392,8 +392,11 @@ function tagsPanel(userId) {
         },
 
         async loadAvailableTags() {
-            const res = await api.get('/tags?assignable=1&limit=200&active=1');
-            if (!res.ok) return;
+            const res = await api.get('/tags?assignable=1&limit=200');
+            if (!res.ok) {
+                toast(res.data?.error || 'Failed to load available tags', 'error');
+                return;
+            }
             const assigned = new Set(this.tags.map(t => t.tag_id));
             this.availableTags = res.data.data.tags.filter(t => !assigned.has(t.id));
         },
