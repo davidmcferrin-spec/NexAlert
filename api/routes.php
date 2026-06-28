@@ -18,6 +18,7 @@ use NexAlert\Controllers\TagController;
 use NexAlert\Controllers\TargetController;
 use NexAlert\Controllers\RoleController;
 use NexAlert\Controllers\ProfileController;
+use NexAlert\Controllers\AlertController;
 use NexAlert\Controllers\WebhookController;
 use NexAlert\Middleware\AuthMiddleware;
 use NexAlert\Middleware\RateLimitMiddleware;
