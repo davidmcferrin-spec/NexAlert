@@ -37,16 +37,26 @@ class Database
 
     /**
      * Get the raw PDO connection.
+     * Note: ping/reconnect is intentionally NOT done here because running
+     * SELECT 1 resets lastInsertId(). Use ensureConnected() for workers.
      */
     public function pdo(): PDO
     {
-        // Ping and reconnect if the connection dropped (common on long-running workers)
+        return $this->pdo;
+    }
+
+    /**
+     * Ping the connection and reconnect if dropped.
+     * Call this in long-running workers at the top of each job cycle,
+     * NOT inline during request handling.
+     */
+    public function ensureConnected(): void
+    {
         try {
             $this->pdo->query('SELECT 1');
         } catch (PDOException) {
             $this->connect();
         }
-        return $this->pdo;
     }
 
     /**
