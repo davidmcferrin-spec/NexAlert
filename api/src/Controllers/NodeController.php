@@ -1,7 +1,7 @@
 <?php
 /**
  * NexAlert - Org Node Controller
- * Manages the org hierarchy tree (regions, markets, sites, departments, teams).
+ * Manages the org hierarchy tree (global BUs, regions, markets, business units, sites, etc.).
  *
  * GET    /api/v1/orgs/{org_id}/nodes           → list nodes (tree or flat)
  * POST   /api/v1/orgs/{org_id}/nodes           → create node
@@ -23,7 +23,22 @@ use NexAlert\Services\TagService;
 
 class NodeController
 {
-    private const VALID_TYPES = ['org', 'region', 'market', 'site', 'department', 'team'];
+    private const VALID_TYPES = [
+        'org',
+        'global_business_unit',
+        'region',
+        'market',
+        'business_unit',
+        'site',
+        'department',
+        'team',
+    ];
+
+    /** node_type => allowed parent node_type values */
+    private const PARENT_TYPE_RULES = [
+        'global_business_unit' => ['org'],
+        'business_unit'        => ['market'],
+    ];
 
     /**
      * GET /api/v1/orgs/{org_id}/nodes
@@ -112,13 +127,18 @@ class NodeController
             Response::validationError(['slug' => 'Slug already in use within this organization']);
         }
 
+        if ($nodeType === 'org') {
+            Response::validationError(['node_type' => 'Cannot create org root nodes manually']);
+        }
+
         // Validate and resolve parent
         $depth      = 0;
         $parentPath = "/{$orgId}/";
+        $parent     = null;
 
         if ($parentId !== null) {
             $parent = $db->fetchOne(
-                'SELECT id, path, depth, org_id FROM org_nodes WHERE id = ? AND is_active = 1',
+                'SELECT id, path, depth, org_id, node_type FROM org_nodes WHERE id = ? AND is_active = 1',
                 [$parentId]
             );
             if (!$parent || (int) $parent['org_id'] !== $orgId) {
@@ -127,6 +147,8 @@ class NodeController
             $depth      = (int) $parent['depth'] + 1;
             $parentPath = $parent['path'];
         }
+
+        self::assertValidParentForType($nodeType, $parent);
 
         $id = $db->transaction(function (Database $db) use (
             $orgId, $parentId, $nodeType, $name, $slug, $depth, $parentPath, $request
@@ -227,6 +249,20 @@ class NodeController
             Response::validationError(['node_type' => 'Must be one of: ' . implode(', ', self::VALID_TYPES)]);
         }
 
+        if ($nodeType === 'org' && $node['node_type'] !== 'org') {
+            Response::validationError(['node_type' => 'Cannot change node type to org']);
+        }
+
+        $parent = null;
+        if ($node['parent_id']) {
+            $parent = $db->fetchOne(
+                'SELECT id, node_type FROM org_nodes WHERE id = ?',
+                [(int) $node['parent_id']]
+            );
+        }
+
+        self::assertValidParentForType($nodeType, $parent);
+
         $db->execute(
             'UPDATE org_nodes SET name = ?, node_type = ? WHERE id = ?',
             [$name, $nodeType, $nodeId]
@@ -312,7 +348,7 @@ class NodeController
         // Prevent moving a node into its own subtree
         if ($newParentId !== null) {
             $newParent = $db->fetchOne(
-                'SELECT id, path, depth, org_id FROM org_nodes WHERE id = ? AND is_active = 1',
+                'SELECT id, path, depth, org_id, node_type FROM org_nodes WHERE id = ? AND is_active = 1',
                 [$newParentId]
             );
             if (!$newParent || (int) $newParent['org_id'] !== $orgId) {
@@ -322,6 +358,12 @@ class NodeController
             if (str_starts_with($newParent['path'], $node['path'])) {
                 Response::error('Cannot move a node into its own subtree.', 409);
             }
+
+            self::assertValidParentForType($node['node_type'], $newParent);
+        } elseif (self::requiresParent($node['node_type'])) {
+            Response::validationError([
+                'parent_id' => self::placementErrorMessage($node['node_type']),
+            ]);
         }
 
         $db->transaction(function (Database $db) use ($node, $nodeId, $newParentId, $orgId, $request): void {
@@ -422,5 +464,48 @@ class NodeController
         $slug = preg_replace('/[^a-z0-9\s_-]/', '', $slug);
         $slug = preg_replace('/[\s]+/', '-', trim($slug));
         return substr($slug, 0, 80);
+    }
+
+    /**
+     * Enforce parent-type rules for global_business_unit and business_unit nodes.
+     *
+     * @param array<string, mixed>|null $parent Row with at least node_type
+     */
+    private static function assertValidParentForType(string $nodeType, ?array $parent): void
+    {
+        if (!self::requiresParent($nodeType)) {
+            return;
+        }
+
+        if ($parent === null) {
+            Response::validationError([
+                'parent_id'  => self::placementErrorMessage($nodeType),
+                'node_type'  => self::placementErrorMessage($nodeType),
+            ]);
+        }
+
+        $allowedParents = self::PARENT_TYPE_RULES[$nodeType];
+        $parentType     = (string) $parent['node_type'];
+
+        if (!in_array($parentType, $allowedParents, true)) {
+            Response::validationError([
+                'parent_id' => self::placementErrorMessage($nodeType),
+                'node_type' => self::placementErrorMessage($nodeType),
+            ]);
+        }
+    }
+
+    private static function requiresParent(string $nodeType): bool
+    {
+        return isset(self::PARENT_TYPE_RULES[$nodeType]);
+    }
+
+    private static function placementErrorMessage(string $nodeType): string
+    {
+        return match ($nodeType) {
+            'global_business_unit' => 'Global Business Unit nodes must be placed directly under the organization root',
+            'business_unit'        => 'Business Unit nodes must be placed directly under a Market node',
+            default                => 'Invalid node placement for this type',
+        };
     }
 }

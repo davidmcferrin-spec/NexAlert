@@ -86,7 +86,7 @@ $headerActions = '
                 <span x-text="selectedOrg?.display_name"></span>
                 <span class="text-gray-400 font-normal ml-1">— Org Tree</span>
             </h2>
-            <button @click="showAddNode = true"
+            <button @click="openAddNode()"
                     class="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold
                            bg-red-600 hover:bg-red-700 text-white rounded-lg transition-colors">
                 <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -114,7 +114,7 @@ $headerActions = '
                             <!-- Node type badge -->
                             <span class="text-xs px-1.5 py-0.5 rounded font-mono uppercase
                                          bg-gray-100 dark:bg-gray-800 text-gray-500 dark:text-gray-400 flex-shrink-0"
-                                  x-text="node.node_type"></span>
+                                  x-text="formatNodeType(node.node_type)"></span>
                             <!-- Name -->
                             <span class="text-sm text-gray-800 dark:text-gray-200 font-medium" x-text="node.name"></span>
                             <!-- Member count -->
@@ -162,12 +162,13 @@ $headerActions = '
                             class="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-gray-700
                                    bg-white dark:bg-gray-800 text-gray-900 dark:text-white
                                    focus:outline-none focus:ring-2 focus:ring-red-500">
-                        <option value="region">Region</option>
-                        <option value="market">Market</option>
-                        <option value="site">Site</option>
-                        <option value="department">Department</option>
-                        <option value="team">Team</option>
+                        <template x-for="opt in nodeTypesForParent()" :key="opt.value">
+                            <option :value="opt.value" x-text="opt.label"></option>
+                        </template>
                     </select>
+                    <p class="text-xs text-gray-400 mt-1" x-show="!newNode.parent_id">
+                        Select an org in the tree first, or use + Child on a node.
+                    </p>
                 </div>
             </div>
             <div class="flex gap-2">
@@ -178,7 +179,7 @@ $headerActions = '
                                text-white rounded-lg transition-colors">
                     Add Node
                 </button>
-                <button @click="showAddNode = false; newNode = { name: '', node_type: 'department', parent_id: null, parentName: '' }"
+                <button @click="cancelAddNode()"
                         class="px-4 py-2 text-sm text-gray-500 hover:text-gray-700 dark:hover:text-gray-300 transition-colors">
                     Cancel
                 </button>
@@ -193,7 +194,93 @@ function orgsPage() {
     return {
         orgs: [], nodes: [], loading: true, nodesLoading: false,
         search: '', selectedOrg: null, showAddNode: false,
-        newNode: { name: '', node_type: 'department', parent_id: null, parentName: '' },
+        newNode: { name: '', node_type: 'region', parent_id: null, parentName: '', parent_type: null },
+
+        formatNodeType(type) {
+            const labels = {
+                org: 'Org',
+                global_business_unit: 'Global BU',
+                region: 'Region',
+                market: 'Market',
+                business_unit: 'Business Unit',
+                site: 'Site',
+                department: 'Dept',
+                team: 'Team',
+            };
+            return labels[type] || type;
+        },
+
+        nodeTypesForParent() {
+            return this.typesForParentType(this.newNode.parent_type);
+        },
+
+        typesForParentType(parentType) {
+            if (parentType === 'org') {
+                return [
+                    { value: 'global_business_unit', label: 'Global Business Unit' },
+                    { value: 'region', label: 'Region' },
+                    { value: 'market', label: 'Market' },
+                ];
+            }
+            if (parentType === 'market') {
+                return [
+                    { value: 'business_unit', label: 'Business Unit' },
+                    { value: 'site', label: 'Site' },
+                ];
+            }
+            if (parentType === 'region') {
+                return [
+                    { value: 'market', label: 'Market' },
+                    { value: 'site', label: 'Site' },
+                ];
+            }
+            if (parentType === 'global_business_unit' || parentType === 'business_unit' || parentType === 'site') {
+                return [
+                    { value: 'department', label: 'Department' },
+                    { value: 'team', label: 'Team' },
+                ];
+            }
+            if (parentType === 'department') {
+                return [{ value: 'team', label: 'Team' }];
+            }
+            return [
+                { value: 'region', label: 'Region' },
+                { value: 'market', label: 'Market' },
+                { value: 'site', label: 'Site' },
+                { value: 'department', label: 'Department' },
+                { value: 'team', label: 'Team' },
+            ];
+        },
+
+        orgRootNode() {
+            return this.nodes.find(n => n.node_type === 'org') || null;
+        },
+
+        openAddNode() {
+            const root = this.orgRootNode();
+            if (!root) {
+                toast('Load the org tree first', 'error');
+                return;
+            }
+            this.setAddNodeParent(root);
+            this.showAddNode = true;
+        },
+
+        setAddNodeParent(parent) {
+            const opts = this.typesForParentType(parent.node_type);
+            this.newNode = {
+                name: '',
+                node_type: opts[0]?.value || 'department',
+                parent_id: parent.id,
+                parentName: parent.name,
+                parent_type: parent.node_type,
+            };
+        },
+
+        cancelAddNode() {
+            this.showAddNode = false;
+            this.newNode = { name: '', node_type: 'region', parent_id: null, parentName: '', parent_type: null };
+        },
 
         get filtered() {
             if (!this.search) return this.orgs;
@@ -221,26 +308,30 @@ function orgsPage() {
         },
 
         addChildNode(parent) {
-            this.newNode = { name: '', node_type: 'department', parent_id: parent.id, parentName: parent.name };
+            this.setAddNodeParent(parent);
             this.showAddNode = true;
         },
 
         async saveNode() {
-            if (!this.newNode.name || !this.selectedOrg) return;
-            const body = { name: this.newNode.name, node_type: this.newNode.node_type };
-            if (this.newNode.parent_id) body.parent_id = this.newNode.parent_id;
+            if (!this.newNode.name || !this.selectedOrg || !this.newNode.parent_id) {
+                toast('Name and parent node are required', 'error');
+                return;
+            }
+            const body = { name: this.newNode.name, node_type: this.newNode.node_type, parent_id: this.newNode.parent_id };
 
             const res = await api.post(`/orgs/${this.selectedOrg.id}/nodes`, body);
             if (res.ok) {
                 toast('Node added');
-                this.showAddNode = false;
-                this.newNode = { name: '', node_type: 'department', parent_id: null, parentName: '' };
+                this.cancelAddNode();
                 await this.selectOrg(this.selectedOrg);
                 // Refresh org list for node count
                 const orgsRes = await api.get('/orgs?limit=200');
                 if (orgsRes.ok) this.orgs = orgsRes.data.data.orgs;
             } else {
-                toast(res.data.error || 'Failed to add node', 'error');
+                const err = res.data.errors
+                    ? Object.values(res.data.errors).join(' ')
+                    : (res.data.error || 'Failed to add node');
+                toast(err, 'error');
             }
         },
 
