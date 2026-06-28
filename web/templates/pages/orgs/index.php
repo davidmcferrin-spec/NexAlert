@@ -236,7 +236,14 @@ function orgsPage() {
                     { value: 'site', label: 'Site' },
                 ];
             }
-            if (parentType === 'global_business_unit' || parentType === 'business_unit' || parentType === 'site') {
+            if (parentType === 'global_business_unit') {
+                return [
+                    { value: 'site', label: 'Site' },
+                    { value: 'department', label: 'Department' },
+                    { value: 'team', label: 'Team' },
+                ];
+            }
+            if (parentType === 'business_unit' || parentType === 'site') {
                 return [
                     { value: 'department', label: 'Department' },
                     { value: 'team', label: 'Team' },

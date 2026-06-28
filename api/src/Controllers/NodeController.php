@@ -39,6 +39,9 @@ class NodeController
     private const PARENT_TYPE_RULES = [
         'global_business_unit' => ['org'],
         'business_unit'        => ['market'],
+        'site'                 => ['global_business_unit', 'region', 'market', 'business_unit'],
+        'department'           => ['site', 'global_business_unit', 'business_unit'],
+        'team'                 => ['department', 'site', 'global_business_unit', 'business_unit'],
     ];
 
     /**
@@ -521,7 +524,7 @@ class NodeController
     }
 
     /**
-     * Enforce parent-type rules for global_business_unit and business_unit nodes.
+     * Enforce parent-type placement rules for node types with structural constraints.
      *
      * @param array<string, mixed>|null $parent Row with at least node_type
      */
@@ -559,6 +562,9 @@ class NodeController
         return match ($nodeType) {
             'global_business_unit' => 'Global Business Unit nodes must be placed directly under the organization root',
             'business_unit'        => 'Business Unit nodes must be placed directly under a Market node',
+            'site'                 => 'Site nodes must be placed under a Global BU, Region, Market, or Business Unit',
+            'department'           => 'Department nodes must be placed under a Site, Global BU, or Business Unit',
+            'team'                 => 'Team nodes must be placed under a Department, Site, Global BU, or Business Unit',
             default                => 'Invalid node placement for this type',
         };
     }
