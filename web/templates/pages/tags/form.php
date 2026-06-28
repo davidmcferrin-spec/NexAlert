@@ -40,7 +40,10 @@ $isSuperAdmin = in_array('super_admin', $_SESSION['user']['roles'] ?? [], true);
                     <input type="hidden" name="id" :value="isEdit ? tagId : ''">
 
                     <div>
-                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Name <span class="text-red-500">*</span></label>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                            <?= tip_label('Name', 'Display name shown in admin lists and the alert target picker (e.g. Engineering, On-Call).') ?>
+                            <span class="text-red-500">*</span>
+                        </label>
                         <input type="text" name="name" required
                                :value="tag?.name ?? ''"
                                class="w-full px-3 py-2 text-sm rounded-xl border border-gray-300 dark:border-gray-700
@@ -50,13 +53,17 @@ $isSuperAdmin = in_array('super_admin', $_SESSION['user']['roles'] ?? [], true);
                     <template x-if="!isEdit">
                         <div class="grid grid-cols-2 gap-5">
                             <div>
-                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Slug</label>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                    <?= tip_label('Slug', 'URL-safe identifier used in target expressions (tag:engineering). Auto-generated from the name if blank; cannot be changed after creation.') ?>
+                                </label>
                                 <input type="text" name="slug" placeholder="auto-generated if blank"
                                        class="w-full px-3 py-2 text-sm rounded-xl border border-gray-300 dark:border-gray-700
                                               bg-white dark:bg-gray-800 text-gray-900 dark:text-white font-mono focus:ring-2 focus:ring-red-500">
                             </div>
                             <div>
-                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Owner Org</label>
+                                <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                                    <?= tip_label('Owner Org', 'Global = tag available in all orgs. Selecting an org limits visibility and management to that organization.') ?>
+                                </label>
                                 <select name="owner_org_id"
                                         class="w-full px-3 py-2 text-sm rounded-xl border border-gray-300 dark:border-gray-700
                                                bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-red-500">
@@ -75,7 +82,9 @@ $isSuperAdmin = in_array('super_admin', $_SESSION['user']['roles'] ?? [], true);
                     </div>
 
                     <div>
-                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Description</label>
+                        <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                            <?= tip_label('Description', 'Optional admin notes about this tag. Not shown to recipients on alerts.') ?>
+                        </label>
                         <textarea name="description" rows="3" x-model="description"
                                   class="w-full px-3 py-2 text-sm rounded-xl border border-gray-300 dark:border-gray-700
                                          bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-red-500"></textarea>
@@ -86,19 +95,19 @@ $isSuperAdmin = in_array('super_admin', $_SESSION['user']['roles'] ?? [], true);
                             <input type="checkbox" name="is_exclusive" value="1"
                                    :checked="tag?.is_exclusive == 1"
                                    class="rounded border-gray-300 text-red-600 focus:ring-red-500">
-                            Exclusive tag
+                            <?= tip_label('Exclusive tag', 'Only the tag admin or a super admin can assign this tag. Other admins cannot add users without going through approval.') ?>
                         </label>
                         <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 cursor-pointer">
                             <input type="checkbox" name="allow_self_request" value="1"
                                    :checked="tag?.allow_self_request != 0"
                                    class="rounded border-gray-300 text-red-600 focus:ring-red-500">
-                            Allow self-request
+                            <?= tip_label('Allow self-request', 'Users can request this tag from their profile. When off, only admins can assign it.') ?>
                         </label>
                         <label class="flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300 cursor-pointer">
                             <input type="checkbox" name="requires_approval" value="1"
                                    :checked="tag?.requires_approval != 0"
                                    class="rounded border-gray-300 text-red-600 focus:ring-red-500">
-                            Requires approval
+                            <?= tip_label('Requires approval', 'Assignments and self-requests stay pending until a tag admin approves. When off, admins can assign immediately.') ?>
                         </label>
                     </div>
 
