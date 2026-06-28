@@ -37,82 +37,80 @@ $pageSubtitle = 'Preview alert recipients and build nested AND/OR target express
                                  class="flex items-center gap-2 text-[10px] font-bold uppercase text-red-500 tracking-wider py-1">
                                 <span class="flex-1 border-t border-red-200 dark:border-red-800"></span>OR<span class="flex-1 border-t border-red-200 dark:border-red-800"></span>
                             </div>
-                            <div x-data="{ branchPath: 'root.' + branchIdx }">
-                                <!-- AND branch panel -->
-                                <div class="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-3 space-y-2">
-                                    <div class="flex items-center justify-between gap-2">
-                                        <span class="text-[10px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400">AND branch</span>
-                                        <button x-show="$root.targetTree.children.length > 1"
-                                                @click="$root.removeBranch(branchPath)"
-                                                class="text-xs text-gray-400 hover:text-red-500">Remove branch</button>
-                                    </div>
+                            <!-- AND branch panel -->
+                            <div class="rounded-xl border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-900 p-3 space-y-2">
+                                <div class="flex items-center justify-between gap-2">
+                                    <span class="text-[10px] font-bold uppercase tracking-wider text-amber-600 dark:text-amber-400">AND branch</span>
+                                    <button x-show="targetTree.children.length > 1"
+                                            @click="removeBranch('root.' + branchIdx)"
+                                            class="text-xs text-gray-400 hover:text-red-500">Remove branch</button>
+                                </div>
 
-                                    <!-- Children of AND branch (terms + OR subgroups) -->
-                                    <template x-for="(child, ci) in $root.nodeAt(branchPath).children" :key="branchPath + '.' + ci">
-                                        <div>
-                                            <!-- OR subgroup -->
-                                            <template x-if="child.type === 'group'">
-                                                <div class="rounded-lg border border-dashed border-amber-300 dark:border-amber-800 p-2 space-y-2 ml-2">
-                                                    <div class="flex items-center justify-between gap-2">
-                                                        <span class="text-[10px] font-bold uppercase text-amber-500">OR subgroup</span>
-                                                        <button @click="$root.removeChild(branchPath + '.' + ci)"
-                                                                class="text-xs text-gray-400 hover:text-red-500">&times;</button>
-                                                    </div>
-                                                    <div class="flex flex-wrap items-center gap-1.5 min-h-[1.5rem]">
-                                                        <template x-for="(sub, si) in child.children" :key="branchPath + '.' + ci + '.' + si">
-                                                            <span class="inline-flex items-center gap-1">
-                                                                <span x-show="si > 0" class="text-[9px] font-bold text-red-500 uppercase">or</span>
-                                                                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-mono
-                                                                             bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200">
-                                                                    <span x-text="sub.dim + ':' + (sub.label || sub.value)"></span>
-                                                                    <button @click="$root.removeChild(branchPath + '.' + ci + '.' + si)"
-                                                                            class="text-gray-400 hover:text-red-500">&times;</button>
-                                                                </span>
+                                <!-- Children of AND branch (terms + OR subgroups) -->
+                                <template x-for="(child, ci) in branch.children" :key="'root.' + branchIdx + '.' + ci">
+                                    <div>
+                                        <!-- OR subgroup -->
+                                        <template x-if="child.type === 'group'">
+                                            <div class="rounded-lg border border-dashed border-amber-300 dark:border-amber-800 p-2 space-y-2 ml-2">
+                                                <div class="flex items-center justify-between gap-2">
+                                                    <span class="text-[10px] font-bold uppercase text-amber-500">OR subgroup</span>
+                                                    <button @click="removeChild('root.' + branchIdx + '.' + ci)"
+                                                            class="text-xs text-gray-400 hover:text-red-500">&times;</button>
+                                                </div>
+                                                <div class="flex flex-wrap items-center gap-1.5 min-h-[1.5rem]">
+                                                    <template x-for="(sub, si) in child.children" :key="'root.' + branchIdx + '.' + ci + '.' + si">
+                                                        <span class="inline-flex items-center gap-1">
+                                                            <span x-show="si > 0" class="text-[9px] font-bold text-red-500 uppercase">or</span>
+                                                            <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-mono
+                                                                         bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200">
+                                                                <span x-text="sub.dim + ':' + (sub.label || sub.value)"></span>
+                                                                <button @click="removeChild('root.' + branchIdx + '.' + ci + '.' + si)"
+                                                                        class="text-gray-400 hover:text-red-500">&times;</button>
                                                             </span>
-                                                        </template>
-                                                        <span x-show="child.children.length === 0" class="text-xs text-gray-400 italic">Empty — add terms</span>
-                                                    </div>
-                                                    <div class="flex flex-wrap gap-1">
-                                                        <template x-for="t in $root.dimensionTypes" :key="t">
-                                                            <button @click="$root.openPicker(branchPath + '.' + ci, t)"
-                                                                    class="px-2 py-0.5 text-[10px] rounded border border-dashed border-gray-300
-                                                                           dark:border-gray-600 text-gray-500 hover:border-red-400 hover:text-red-600"
-                                                                    x-text="'+ ' + t"></button>
-                                                        </template>
-                                                    </div>
+                                                        </span>
+                                                    </template>
+                                                    <span x-show="child.children.length === 0" class="text-xs text-gray-400 italic">Empty — add terms</span>
                                                 </div>
-                                            </template>
-                                            <!-- Direct AND term -->
-                                            <template x-if="child.type === 'term'">
-                                                <div class="flex items-center gap-2 ml-2">
-                                                    <span x-show="ci > 0" class="text-[9px] font-bold text-amber-600 uppercase">and</span>
-                                                    <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-mono
-                                                                 bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200">
-                                                        <span x-text="child.dim + ':' + (child.label || child.value)"></span>
-                                                        <button @click="$root.removeChild(branchPath + '.' + ci)"
-                                                                class="text-gray-400 hover:text-red-500">&times;</button>
-                                                    </span>
+                                                <div class="flex flex-wrap gap-1">
+                                                    <template x-for="t in dimensionTypes" :key="t">
+                                                        <button @click="openPicker('root.' + branchIdx + '.' + ci, t)"
+                                                                class="px-2 py-0.5 text-[10px] rounded border border-dashed border-gray-300
+                                                                       dark:border-gray-600 text-gray-500 hover:border-red-400 hover:text-red-600"
+                                                                x-text="'+ ' + t"></button>
+                                                    </template>
                                                 </div>
-                                            </template>
-                                        </div>
-                                    </template>
-
-                                    <div x-show="$root.nodeAt(branchPath).children.length === 0"
-                                         class="text-xs text-gray-400 italic ml-2">No conditions — add a term or OR subgroup</div>
-
-                                    <div class="flex flex-wrap gap-1.5 pt-1 border-t border-gray-100 dark:border-gray-800">
-                                        <template x-for="t in $root.dimensionTypes" :key="'d'+t">
-                                            <button @click="$root.openPicker(branchPath, t)"
-                                                    class="px-2 py-0.5 text-[10px] rounded border border-dashed border-gray-300
-                                                           dark:border-gray-600 text-gray-500 hover:border-red-400 hover:text-red-600"
-                                                    x-text="'+ ' + t"></button>
+                                            </div>
                                         </template>
-                                        <button @click="$root.addOrSubgroup(branchPath)"
-                                                class="px-2 py-0.5 text-[10px] rounded border border-dashed border-amber-400
-                                                       text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/30">
-                                            + OR subgroup
-                                        </button>
+                                        <!-- Direct AND term -->
+                                        <template x-if="child.type === 'term'">
+                                            <div class="flex items-center gap-2 ml-2">
+                                                <span x-show="ci > 0" class="text-[9px] font-bold text-amber-600 uppercase">and</span>
+                                                <span class="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-mono
+                                                             bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200">
+                                                    <span x-text="child.dim + ':' + (child.label || child.value)"></span>
+                                                    <button @click="removeChild('root.' + branchIdx + '.' + ci)"
+                                                            class="text-gray-400 hover:text-red-500">&times;</button>
+                                                </span>
+                                            </div>
+                                        </template>
                                     </div>
+                                </template>
+
+                                <div x-show="branch.children.length === 0"
+                                     class="text-xs text-gray-400 italic ml-2">No conditions — add a term or OR subgroup</div>
+
+                                <div class="flex flex-wrap gap-1.5 pt-1 border-t border-gray-100 dark:border-gray-800">
+                                    <template x-for="t in dimensionTypes" :key="'d' + branchIdx + t">
+                                        <button @click="openPicker('root.' + branchIdx, t)"
+                                                class="px-2 py-0.5 text-[10px] rounded border border-dashed border-gray-300
+                                                       dark:border-gray-600 text-gray-500 hover:border-red-400 hover:text-red-600"
+                                                x-text="'+ ' + t"></button>
+                                    </template>
+                                    <button @click="addOrSubgroup('root.' + branchIdx)"
+                                            class="px-2 py-0.5 text-[10px] rounded border border-dashed border-amber-400
+                                                   text-amber-600 hover:bg-amber-50 dark:hover:bg-amber-950/30">
+                                        + OR subgroup
+                                    </button>
                                 </div>
                             </div>
                         </div>
