@@ -1,8 +1,7 @@
 <?php
-use NexAlert\Config\Env;
 
 $token   = $_SESSION['access_token'];
-$apiBase = Env::get('APP_URL');
+$apiBase = web_api_base();
 $id      = (int) ($_POST['id'] ?? 0);
 $isEdit  = $id > 0;
 

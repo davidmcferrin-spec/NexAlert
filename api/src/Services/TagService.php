@@ -42,9 +42,48 @@ class TagService
             $tagId = $db->lastInsertId();
         } else {
             $tagId = (int) $tag['id'];
+            // Re-activate if another org node still uses this slug
+            if (self::systemTagHasActiveNode($db, $slug)) {
+                $db->execute('UPDATE tags SET is_active = 1 WHERE id = ?', [$tagId]);
+            }
         }
 
         return $tagId;
+    }
+
+    /**
+     * True when at least one active org node slugifies to the given slug.
+     */
+    public static function systemTagHasActiveNode(Database $db, string $slug): bool
+    {
+        $nodes = $db->fetchAll('SELECT name FROM org_nodes WHERE is_active = 1');
+        foreach ($nodes as $node) {
+            if (self::slugify($node['name']) === $slug) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /**
+     * Deactivate system tags whose org node was removed; reactivate when a node returns.
+     */
+    public static function syncSystemTagForNodeName(Database $db, string $nodeName): void
+    {
+        $slug = self::slugify($nodeName);
+        $tag  = $db->fetchOne(
+            'SELECT id, is_active FROM tags WHERE slug = ? AND is_system = 1',
+            [$slug]
+        );
+        if (!$tag) {
+            return;
+        }
+
+        $shouldBeActive = self::systemTagHasActiveNode($db, $slug) ? 1 : 0;
+        if ((int) $tag['is_active'] !== $shouldBeActive) {
+            $db->execute('UPDATE tags SET is_active = ? WHERE id = ?', [$shouldBeActive, $tag['id']]);
+        }
     }
 
     /**

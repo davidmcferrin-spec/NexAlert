@@ -279,6 +279,12 @@ class NodeController
             [$name, $nodeType, $nodeId]
         );
 
+        if ($name !== $node['name']) {
+            TagService::syncSystemTagForNodeName($db, $node['name']);
+            TagService::syncSystemTagForNodeName($db, $name);
+            TagService::ensureNodeTag($db, $orgId, $nodeId, $name);
+        }
+
         AuditService::log('org_node.updated', 'org_node', (string) $nodeId, [
             'before' => ['name' => $node['name'], 'node_type' => $node['node_type']],
             'after'  => ['name' => $name, 'node_type' => $nodeType],
@@ -327,6 +333,8 @@ class NodeController
         }
 
         $db->execute('UPDATE org_nodes SET is_active = 0 WHERE id = ?', [$nodeId]);
+
+        TagService::syncSystemTagForNodeName($db, $node['name']);
 
         AuditService::log('org_node.deactivated', 'org_node', (string) $nodeId, [], $request->user['uid']);
 

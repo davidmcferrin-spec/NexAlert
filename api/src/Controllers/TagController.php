@@ -22,6 +22,7 @@ use NexAlert\Api\Response;
 use NexAlert\Config\Database;
 use NexAlert\Services\AuditService;
 use NexAlert\Services\RowNormalizer;
+use NexAlert\Services\TagService;
 
 class TagController
 {
@@ -96,6 +97,27 @@ class TagController
         );
 
         $rows = array_map([self::class, 'normalizeTagRow'], $rows);
+        $rows = array_map(static function (array $row): array {
+            if ((int) ($row['is_system'] ?? 0) === 1) {
+                $backed = TagService::systemTagHasActiveNode(
+                    Database::getInstance(),
+                    (string) $row['slug']
+                );
+                $row['node_backed'] = $backed ? 1 : 0;
+                // Self-heal stale system tags left active after org node removal
+                if (!$backed && (int) ($row['is_active'] ?? 0) === 1) {
+                    Database::getInstance()->execute(
+                        'UPDATE tags SET is_active = 0 WHERE id = ?',
+                        [(int) $row['id']]
+                    );
+                    $row['is_active'] = 0;
+                }
+            } else {
+                $row['node_backed'] = null;
+            }
+
+            return $row;
+        }, $rows);
 
         Response::success([
             'tags'   => $rows,
@@ -320,13 +342,26 @@ class TagController
         self::assertTagAccess($request, $id, $db);
         self::assertTagManage($request);
 
-        $tag = $db->fetchOne('SELECT id, name, is_system, is_active FROM tags WHERE id = ?', [$id]);
+        $tag = $db->fetchOne('SELECT id, name, slug, is_system, is_active FROM tags WHERE id = ?', [$id]);
         if (!$tag) {
             Response::notFound('Tag not found');
         }
 
-        if ((int) $tag['is_system'] === 1) {
+        $isSystem = (int) $tag['is_system'] === 1;
+        $isOrphanSystem = $isSystem && !TagService::systemTagHasActiveNode($db, (string) $tag['slug']);
+        $isSuperAdmin   = in_array('super_admin', $request->user['roles'] ?? [], true);
+
+        if ($isSystem && !$isOrphanSystem) {
             Response::error($hard ? 'System tags cannot be deleted' : 'System tags cannot be deactivated', 409);
+        }
+
+        if ($isOrphanSystem && !$isSuperAdmin) {
+            Response::error(
+                $hard
+                    ? 'Orphan system tags can only be deleted by a super admin'
+                    : 'Orphan system tags can only be deactivated by a super admin',
+                403
+            );
         }
 
         if (!$hard) {
@@ -486,7 +521,13 @@ class TagController
             [$id]
         );
 
-        return self::normalizeTagRow($tag);
+        $tag = self::normalizeTagRow($tag);
+
+        if ((int) ($tag['is_system'] ?? 0) === 1) {
+            $tag['node_backed'] = TagService::systemTagHasActiveNode($db, (string) $tag['slug']) ? 1 : 0;
+        }
+
+        return $tag;
     }
 
     /**

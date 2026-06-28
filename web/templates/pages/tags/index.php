@@ -1,6 +1,7 @@
 <?php
 $pageTitle    = 'Tags';
 $pageSubtitle = 'Targeting labels, exclusive access, and approval requests';
+$isSuperAdmin = in_array('super_admin', $_SESSION['user']['roles'] ?? [], true);
 
 $headerActions = '
 <a href="/admin/tags/new"
@@ -65,8 +66,11 @@ $headerActions = '
                                    class="font-medium text-gray-900 dark:text-white hover:text-red-600 dark:hover:text-red-400"
                                    x-text="tag.name"></a>
                                 <div class="flex items-center gap-1.5 mt-0.5">
-                                    <span x-show="tag.is_system == 1"
+                                    <span x-show="isSystem(tag.is_system)"
                                           class="text-xs px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 dark:bg-blue-900/30 dark:text-blue-300">System</span>
+                                    <span x-show="isSystem(tag.is_system) && tag.node_backed == 0"
+                                          class="text-xs px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300"
+                                          title="Org node was removed — deactivate or delete from Inactive filter">Orphan</span>
                                     <span x-show="tag.is_exclusive == 1"
                                           class="text-xs px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 dark:bg-amber-900/30 dark:text-amber-300">Exclusive</span>
                                 </div>
@@ -94,16 +98,17 @@ $headerActions = '
                             <td class="px-5 py-3 text-right">
                                 <div class="flex items-center justify-end gap-2 flex-wrap">
                                     <a :href="'/admin/tags/edit?id=' + tag.id"
-                                       class="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-200">Edit</a>
+                                       class="text-xs text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+                                       x-text="isSystem(tag.is_system) ? 'View' : 'Edit'"></a>
                                     <button @click="deactivate(tag)"
                                             class="text-xs text-amber-600 hover:text-amber-800 dark:text-amber-400"
-                                            x-show="isActive(tag.is_active) && tag.is_system != 1">Deactivate</button>
+                                            x-show="canDeactivate(tag)">Deactivate</button>
                                     <button @click="reactivate(tag)"
                                             class="text-xs text-green-600 hover:text-green-800 dark:text-green-400"
-                                            x-show="!isActive(tag.is_active) && tag.is_system != 1">Reactivate</button>
+                                            x-show="canReactivate(tag)">Reactivate</button>
                                     <button @click="deleteTag(tag)"
                                             class="text-xs text-red-500 hover:text-red-700"
-                                            x-show="tag.is_system != 1">Delete</button>
+                                            x-show="canDelete(tag)">Delete</button>
                                 </div>
                             </td>
                         </tr>
@@ -171,6 +176,26 @@ function tagsPage() {
         search: '', filterActive: '1', filterSystem: 'all',
         limit: 50, offset: 0,
         pendingDelete: null,
+        isSuperAdmin: <?= $isSuperAdmin ? 'true' : 'false' ?>,
+
+        canDeactivate(tag) {
+            if (!isActive(tag.is_active)) return false;
+            if (!isSystem(tag.is_system)) return true;
+            return this.isSuperAdmin && tag.node_backed == 0;
+        },
+
+        canReactivate(tag) {
+            if (isActive(tag.is_active)) return false;
+            if (!isSystem(tag.is_system)) return true;
+            return false;
+        },
+
+        canDelete(tag) {
+            if (isSystem(tag.is_system)) {
+                return this.isSuperAdmin && tag.node_backed == 0;
+            }
+            return true;
+        },
 
         async init()     { await this.loadTags(); },
         async prevPage() { this.offset = Math.max(0, this.offset - this.limit); await this.loadTags(); },
@@ -224,7 +249,8 @@ function tagsPage() {
                     this.pendingDelete = { tag, usage: res.data.usage };
                     return;
                 }
-                toast(res.data?.error || 'Delete failed', 'error');
+                const msg = res.data?.error || 'Delete failed';
+                toast(msg, 'error');
                 return;
             }
             toast(`${tag.name} permanently deleted`);

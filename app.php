@@ -46,6 +46,15 @@ function flash(string $message, string $type = 'success'): void
     $_SESSION['flash'][] = ['message' => $message, 'type' => $type];
 }
 
+/** Same host the browser uses — avoids APP_URL mismatches in server-side API calls. */
+function web_api_base(): string
+{
+    $scheme = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+    $host   = $_SERVER['HTTP_HOST'] ?? 'localhost';
+
+    return $scheme . '://' . $host;
+}
+
 function render(string $page, array $vars = []): void
 {
     extract($vars, EXTR_SKIP);
