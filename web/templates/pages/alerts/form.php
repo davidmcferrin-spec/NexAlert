@@ -72,20 +72,38 @@ $pageSubtitle = 'Compose and dispatch a multi-channel alert';
         <div x-show="form.alert_type === 'ack_required'" class="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                    <?= tip_label('Ack deadline (minutes)', 'If not all recipients ack within this window, the escalation user is notified.') ?>
+                    <?= tip_label('Ack deadline (minutes)', 'If not all recipients ack within this window, the escalation contact is notified.') ?>
                 </label>
                 <input type="number" x-model.number="form.ack_deadline_minutes" min="1"
                        class="w-full px-3 py-2 text-sm rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800">
             </div>
-            <div>
+            <div class="space-y-2">
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                    <?= tip_label('Escalation contact', 'User who receives an email listing unacknowledged recipients after the deadline.') ?>
+                    <?= tip_label('Escalation contact', 'User or group who receives an email listing unacknowledged recipients after the deadline.') ?>
                 </label>
-                <select x-model.number="form.escalation_user_id"
+                <div class="flex flex-wrap gap-3 text-sm">
+                    <label class="flex items-center gap-1.5">
+                        <input type="radio" value="none" x-model="escalationTargetType" class="rounded-full"> None
+                    </label>
+                    <label class="flex items-center gap-1.5">
+                        <input type="radio" value="user" x-model="escalationTargetType" class="rounded-full"> User
+                    </label>
+                    <label class="flex items-center gap-1.5">
+                        <input type="radio" value="group" x-model="escalationTargetType" class="rounded-full"> Group
+                    </label>
+                </div>
+                <select x-show="escalationTargetType === 'user'" x-model.number="form.escalation_user_id"
                         class="w-full px-3 py-2 text-sm rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800">
-                    <option value="">— None —</option>
+                    <option value="">— Select user —</option>
                     <template x-for="u in escalationUsers" :key="u.id">
                         <option :value="u.id" x-text="u.display_name + ' (' + u.username + ')'"></option>
+                    </template>
+                </select>
+                <select x-show="escalationTargetType === 'group'" x-model.number="form.escalation_group_id"
+                        class="w-full px-3 py-2 text-sm rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800">
+                    <option value="">— Select group —</option>
+                    <template x-for="g in escalationGroups" :key="g.id">
+                        <option :value="g.id" x-text="g.name + ' (' + g.slug + ')'"></option>
                     </template>
                 </select>
             </div>
@@ -103,6 +121,14 @@ $pageSubtitle = 'Compose and dispatch a multi-channel alert';
                     <input type="checkbox" value="sms" x-model="form.channels"> SMS
                 </label>
             </div>
+        </div>
+
+        <div class="border-t border-gray-100 dark:border-gray-800 pt-4">
+            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                <?= tip_label('Alert TTL (minutes)', 'Optional. After send completes, the alert expires and no further acks or poll votes are accepted.') ?>
+            </label>
+            <input type="number" x-model.number="form.ttl_minutes" min="1" placeholder="Leave blank for no expiry"
+                   class="w-full max-w-xs px-3 py-2 text-sm rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800">
         </div>
 
         <div class="border-t border-gray-100 dark:border-gray-800 pt-4">
@@ -171,10 +197,14 @@ function alertComposer() {
             poll_question: '',
             ack_deadline_minutes: 30,
             escalation_user_id: '',
+            escalation_group_id: '',
+            ttl_minutes: null,
         },
         targetTree: null,
         hasTargetTree: false,
+        escalationTargetType: 'none',
         escalationUsers: [],
+        escalationGroups: [],
         pollOptionsText: 'Yes\nNo',
         preview: {},
         sending: false,
@@ -207,6 +237,10 @@ function alertComposer() {
             const res = await api.get('/users?limit=200');
             if (res.ok) {
                 this.escalationUsers = (res.data.data?.users || []);
+            }
+            const groupsRes = await api.get('/groups?limit=200');
+            if (groupsRes.ok) {
+                this.escalationGroups = (groupsRes.data.data?.groups || []);
             }
         },
 
@@ -254,12 +288,18 @@ function alertComposer() {
             }
             if (this.form.alert_type === 'ack_required') {
                 body.ack_deadline_minutes = this.form.ack_deadline_minutes;
-                if (this.form.escalation_user_id) {
+                if (this.escalationTargetType === 'user' && this.form.escalation_user_id) {
                     body.escalation_user_id = this.form.escalation_user_id;
+                }
+                if (this.escalationTargetType === 'group' && this.form.escalation_group_id) {
+                    body.escalation_group_id = this.form.escalation_group_id;
                 }
             }
             if (this.scheduleEnabled && this.form.send_at) {
                 body.send_at = this.form.send_at;
+            }
+            if (this.form.ttl_minutes && this.form.ttl_minutes > 0) {
+                body.ttl_minutes = this.form.ttl_minutes;
             }
 
             const res = await api.post('/alerts', body);

@@ -6,6 +6,7 @@
  * POST   /api/v1/tokens          → create token (raw value returned once)
  * GET    /api/v1/tokens/{id}     → get token detail
  * PUT    /api/v1/tokens/{id}     → update token
+ * POST   /api/v1/tokens/{id}/regenerate → new bearer secret (shown once in response)
  * DELETE /api/v1/tokens/{id}     → deactivate token
  */
 
@@ -217,6 +218,41 @@ class TokenController
         );
 
         Response::success($updated, 'Token updated');
+    }
+
+    public static function regenerate(Request $request): never
+    {
+        $id = (int) $request->param('id');
+        $db = Database::getInstance();
+
+        self::assertTokenAccess($request, $id, $db);
+
+        $token = $db->fetchOne('SELECT id, name, is_active FROM system_tokens WHERE id = ?', [$id]);
+        if (!$token) {
+            Response::notFound('Token not found');
+        }
+
+        $rawToken  = bin2hex(random_bytes(32));
+        $tokenHash = hash('sha256', $rawToken);
+
+        $db->execute('UPDATE system_tokens SET token_hash = ? WHERE id = ?', [$tokenHash, $id]);
+
+        AuditService::log('system_token.regenerated', 'system_token', (string) $id, [
+            'name' => $token['name'],
+        ], $request->user['uid']);
+
+        $updated = $db->fetchOne(
+            'SELECT t.id, t.name, t.owner_org_id, t.allowed_severity, t.allowed_alert_types,
+                    t.ip_allowlist, t.is_active, t.expires_at, t.created_at,
+                    o.name AS owner_org_name
+             FROM system_tokens t
+             JOIN organizations o ON o.id = t.owner_org_id
+             WHERE t.id = ?',
+            [$id]
+        );
+        $updated['raw_token'] = $rawToken;
+
+        Response::success($updated, 'Token regenerated — copy the new bearer token now', 200);
     }
 
     public static function delete(Request $request): never

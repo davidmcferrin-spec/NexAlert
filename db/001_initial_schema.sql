@@ -521,6 +521,7 @@ CREATE TABLE alerts (
     ack_required    TINYINT(1) NOT NULL DEFAULT 0,
     ack_deadline_minutes SMALLINT UNSIGNED NULL COMMENT 'Escalate if not acked within this window',
     escalation_user_id INT UNSIGNED NULL COMMENT 'User to notify if ack deadline is missed',
+    escalation_group_id INT UNSIGNED NULL COMMENT 'Group members to notify if ack deadline is missed (xor with escalation_user_id)',
     poll_question   VARCHAR(500) NULL,
     poll_options    JSON NULL COMMENT '["Yes","No","Maybe"] for poll-type alerts',
     -- Status
@@ -536,6 +537,7 @@ CREATE TABLE alerts (
     CONSTRAINT fk_alert_token FOREIGN KEY (created_by_token) REFERENCES system_tokens(id) ON DELETE SET NULL,
     CONSTRAINT fk_alert_org FOREIGN KEY (org_id) REFERENCES organizations(id) ON DELETE RESTRICT,
     CONSTRAINT fk_alert_escalation FOREIGN KEY (escalation_user_id) REFERENCES users(id) ON DELETE SET NULL,
+    CONSTRAINT fk_alert_escalation_group FOREIGN KEY (escalation_group_id) REFERENCES `groups`(id) ON DELETE SET NULL,
     CONSTRAINT fk_alert_cancelled_by FOREIGN KEY (cancelled_by) REFERENCES users(id) ON DELETE SET NULL,
     INDEX idx_org (org_id),
     INDEX idx_status (status),

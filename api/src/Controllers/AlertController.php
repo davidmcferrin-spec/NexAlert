@@ -22,6 +22,7 @@ use NexAlert\Config\Database;
 use NexAlert\Services\AlertService;
 use NexAlert\Services\AuditService;
 use NexAlert\Services\PermissionService;
+use NexAlert\Services\PollService;
 
 class AlertController
 {
@@ -147,7 +148,29 @@ class AlertController
             [$id]
         );
 
+        if ($summary['alert_type'] === 'poll') {
+            $summary['poll_results'] = PollService::getResults($db, $id);
+        }
+
         Response::success($summary);
+    }
+
+    public static function poll(Request $request): never
+    {
+        $alertId = (int) $request->param('id');
+        $db      = Database::getInstance();
+        $userId  = (int) $request->user['uid'];
+
+        self::assertAlertAccess($request, $alertId, $db);
+
+        $value = trim((string) $request->input('response_value', ''));
+        if ($value === '') {
+            Response::validationError(['response_value' => 'Required']);
+        }
+
+        $results = PollService::submitResponse($db, $alertId, $userId, $value, 'web');
+
+        Response::success($results, 'Poll response recorded');
     }
 
     public static function ack(Request $request): never
@@ -159,11 +182,15 @@ class AlertController
         self::assertAlertAccess($request, $alertId, $db);
 
         $alert = $db->fetchOne(
-            'SELECT id, ack_required, alert_type, status FROM alerts WHERE id = ?',
+            'SELECT id, ack_required, alert_type, status, expires_at FROM alerts WHERE id = ?',
             [$alertId]
         );
         if (!$alert) {
             Response::notFound('Alert not found');
+        }
+
+        if (PollService::isExpired($alert)) {
+            Response::error('This alert has expired', 410);
         }
 
         if (!(int) $alert['ack_required'] && $alert['alert_type'] !== 'ack_required') {

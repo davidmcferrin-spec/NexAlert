@@ -1,8 +1,7 @@
 <?php
-use NexAlert\Config\Env;
 
 $session = $_SESSION['access_token'];
-$apiBase = Env::get('APP_URL');
+$apiBase = web_api_base();
 $id      = (int) ($_POST['id'] ?? 0);
 $isEdit  = $id > 0;
 
@@ -34,16 +33,24 @@ $raw = @file_get_contents($url, false, $ctx);
 $res = $raw ? json_decode($raw, true) : null;
 
 if ($res && $res['success']) {
-    if (!$isEdit && !empty($res['data']['raw_token'])) {
-        $_SESSION['new_token_display'] = $res['data']['raw_token'];
-        flash('Token created — copy it from the banner on the tokens page.');
+    if (!$isEdit) {
+        $newId    = (int) ($res['data']['id'] ?? 0);
+        $rawToken = (string) ($res['data']['raw_token'] ?? '');
+        if ($newId > 0 && $rawToken !== '') {
+            $_SESSION['token_bearer_display'] = ['token_id' => $newId, 'raw' => $rawToken];
+            flash('Token created — copy the bearer token on the edit page.');
+            header("Location: /admin/tokens/edit?id={$newId}");
+            exit;
+        }
+        flash('Token created but bearer value was not returned — use Regenerate on the edit page.');
         header('Location: /admin/tokens');
-    } else {
-        flash('Token updated.');
-        header('Location: /admin/tokens');
+        exit;
     }
+
+    flash('Token updated.');
+    header("Location: /admin/tokens/edit?id={$id}");
 } else {
-    $err = $res['error'] ?? 'Save failed.';
+    $err = $res['error'] ?? ($raw === false ? 'Save failed — could not reach API.' : 'Save failed.');
     if (!empty($res['errors'])) {
         $err .= ': ' . implode(', ', array_map(
             fn ($k, $v) => "{$k}: {$v}",

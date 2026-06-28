@@ -156,8 +156,23 @@ $severities = ['test', 'info', 'notice', 'warning', 'critical', 'evacuation'];
                         </div>
                         <div class="text-xs text-gray-400 mt-1" x-text="formatDate(a.created_at)"></div>
                         <p class="text-sm text-gray-600 dark:text-gray-400 mt-2 whitespace-pre-wrap" x-text="a.body"></p>
+                        <template x-if="a.alert_type === 'poll' && a.poll_question">
+                            <div class="mt-3">
+                                <p class="text-sm font-medium text-gray-800 dark:text-gray-200" x-text="a.poll_question"></p>
+                                <div x-show="canVote(a)" class="flex flex-wrap gap-2 mt-2">
+                                    <template x-for="opt in (a.poll_options || [])" :key="opt">
+                                        <button @click="votePoll(a, opt)"
+                                                class="px-3 py-1.5 text-xs font-semibold bg-blue-600 text-white rounded-lg hover:bg-blue-700">
+                                            <span x-text="opt"></span>
+                                        </button>
+                                    </template>
+                                </div>
+                                <p x-show="a.i_voted > 0" class="text-xs text-green-600 mt-2 font-medium">You responded to this poll</p>
+                                <p x-show="!canVote(a) && a.i_voted == 0 && (a.is_expired || a.status === 'expired')" class="text-xs text-gray-400 mt-2">Poll closed</p>
+                            </div>
+                        </template>
                     </div>
-                    <button x-show="a.ack_required == 1 && a.i_acked == 0" @click="ackAlert(a)"
+                    <button x-show="a.ack_required == 1 && a.i_acked == 0 && !a.is_expired && a.status !== 'expired'" @click="ackAlert(a)"
                             class="flex-shrink-0 px-3 py-1.5 text-xs font-semibold bg-red-600 text-white rounded-lg">
                         Acknowledge
                     </button>
@@ -210,6 +225,18 @@ function profilePage() {
             try {
                 return new Date(iso.replace(' ', 'T') + 'Z').toLocaleString();
             } catch (e) { return iso; }
+        },
+        canVote(a) {
+            return a.alert_type === 'poll' && a.i_voted == 0 && !a.is_expired && a.status !== 'expired'
+                && ['sending', 'sent'].includes(a.status);
+        },
+        async votePoll(a, option) {
+            const res = await api.post('/alerts/' + a.id + '/poll', { response_value: option });
+            toast(res.ok ? 'Vote recorded' : (res.data?.error || 'Failed'), res.ok ? 'success' : 'error');
+            if (res.ok) {
+                const r = await api.get('/profile/alerts');
+                if (r.ok) this.myAlerts = r.data.data.alerts;
+            }
         },
         async reloadProfile() {
             const p = await api.get('/profile');

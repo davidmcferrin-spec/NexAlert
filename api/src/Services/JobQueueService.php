@@ -82,4 +82,20 @@ class JobQueueService
 
         return $db->lastInsertId();
     }
+
+    public static function pushAlertExpireAt(int $alertId, string $utcDatetime): int
+    {
+        $db = Database::getInstance();
+        $db->execute(
+            'INSERT INTO jobs (queue, payload, status, available_at)
+             VALUES (?, ?, \'pending\', ?)',
+            [
+                self::QUEUE_DISPATCH,
+                json_encode(['type' => 'alert_expire', 'data' => ['alert_id' => $alertId]], JSON_THROW_ON_ERROR),
+                $utcDatetime,
+            ]
+        );
+
+        return $db->lastInsertId();
+    }
 }

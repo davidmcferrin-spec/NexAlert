@@ -85,10 +85,37 @@ class AlertService
             ? (int) $request->input('ack_deadline_minutes') : null;
         $escalationUserId = $request->input('escalation_user_id') !== null
             ? (int) $request->input('escalation_user_id') : null;
+        $escalationGroupId = $request->input('escalation_group_id') !== null
+            ? (int) $request->input('escalation_group_id') : null;
+
+        if ($escalationUserId === 0) {
+            $escalationUserId = null;
+        }
+        if ($escalationGroupId === 0) {
+            $escalationGroupId = null;
+        }
+        if ($escalationUserId !== null && $escalationGroupId !== null) {
+            Response::validationError([
+                'escalation' => 'Specify either escalation_user_id or escalation_group_id, not both',
+            ]);
+        }
+        if ($escalationGroupId !== null) {
+            $escGroup = $db->fetchOne(
+                'SELECT id FROM `groups` WHERE id = ? AND is_active = 1 AND owner_org_id = ?',
+                [$escalationGroupId, $orgId]
+            );
+            if (!$escGroup) {
+                Response::validationError(['escalation_group_id' => 'Invalid or inactive escalation group']);
+            }
+        }
         $pollQuestion = $request->input('poll_question') !== null
             ? trim((string) $request->input('poll_question')) : null;
         $pollOptions  = $request->input('poll_options');
         $ttlMinutes   = $request->input('ttl_minutes') !== null ? (int) $request->input('ttl_minutes') : null;
+
+        if ($ttlMinutes !== null && $ttlMinutes <= 0) {
+            Response::validationError(['ttl_minutes' => 'Must be a positive number of minutes']);
+        }
 
         if ($alertType === 'poll') {
             if ($pollQuestion === null || $pollQuestion === '') {
@@ -104,9 +131,7 @@ class AlertService
         }
 
         $channelsStr = implode(',', $channels);
-        $expiresAt   = $ttlMinutes !== null && $ttlMinutes > 0
-            ? date('Y-m-d H:i:s', time() + $ttlMinutes * 60)
-            : null;
+        // expires_at is set when the alert finishes sending (sent_at + ttl_minutes)
 
         $pollOptionsJson = is_array($pollOptions)
             ? json_encode(array_values($pollOptions), JSON_THROW_ON_ERROR)
@@ -118,8 +143,8 @@ class AlertService
 
         $alertId = $db->transaction(function (Database $db) use (
             $orgId, $createdByUser, $createdByToken, $alertType, $severity,
-            $subject, $body, $bodyHtml, $channelsStr, $ttlMinutes, $expiresAt,
-            $ackRequired, $ackDeadline, $escalationUserId, $pollQuestion, $pollOptionsJson,
+            $subject, $body, $bodyHtml, $channelsStr, $ttlMinutes,
+            $ackRequired, $ackDeadline, $escalationUserId, $escalationGroupId, $pollQuestion, $pollOptionsJson,
             $externalRef, $targetRows, $userIds, $channels, $sendAtParsed, $alertStatus
         ): int {
             $sendAtDb = $sendAtParsed['utc'] ?? null;
@@ -129,15 +154,15 @@ class AlertService
                     created_by_user, created_by_token, org_id,
                     alert_type, severity, subject, body, body_html, channels,
                     send_at, ttl_minutes, expires_at,
-                    ack_required, ack_deadline_minutes, escalation_user_id,
+                    ack_required, ack_deadline_minutes, escalation_user_id, escalation_group_id,
                     poll_question, poll_options,
                     status, external_ref
-                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)',
                 [
                     $createdByUser, $createdByToken, $orgId,
                     $alertType, $severity, $subject, $body, $bodyHtml, $channelsStr,
-                    $sendAtDb, $ttlMinutes ?: null, $expiresAt,
-                    $ackRequired ? 1 : 0, $ackDeadline, $escalationUserId,
+                    $sendAtDb, $ttlMinutes ?: null,
+                    $ackRequired ? 1 : 0, $ackDeadline, $escalationUserId, $escalationGroupId,
                     $pollQuestion, $pollOptionsJson,
                     $alertStatus, $externalRef,
                 ]
@@ -600,8 +625,14 @@ class AlertService
             'external_ref'     => $alert['external_ref'],
             'created_at'       => $alert['created_at'],
             'sent_at'          => $alert['sent_at'],
-            'ack_deadline_at'  => $alert['ack_deadline_at'] ?? null,
-            'escalated_at'     => $alert['escalated_at'] ?? null,
+            'ack_deadline_at'      => $alert['ack_deadline_at'] ?? null,
+            'escalation_user_id'   => !empty($alert['escalation_user_id']) ? (int) $alert['escalation_user_id'] : null,
+            'escalation_group_id'  => !empty($alert['escalation_group_id']) ? (int) $alert['escalation_group_id'] : null,
+            'escalated_at'         => $alert['escalated_at'] ?? null,
+            'ttl_minutes'          => $alert['ttl_minutes'] !== null ? (int) $alert['ttl_minutes'] : null,
+            'expires_at'           => $alert['expires_at'],
+            'poll_question'        => $alert['poll_question'],
+            'poll_options'         => PollService::parsePollOptions($alert),
             'created_by_name'  => $alert['created_by_name'] ?? $alert['created_by_token_name'],
             'recipient_count'  => $recipientCount,
             'delivery_stats'   => $deliveryStats,
@@ -704,6 +735,33 @@ class AlertService
         $db->transaction(function (Database $db) use ($alertId): void {
             self::cancelPendingJobs($db, $alertId);
             $db->execute('DELETE FROM alerts WHERE id = ?', [$alertId]);
+        });
+    }
+
+    /**
+     * Mark an alert expired — skip queued deliveries and cancel pending jobs.
+     */
+    public static function expire(int $alertId): void
+    {
+        $db    = Database::getInstance();
+        $alert = $db->fetchOne('SELECT id, status FROM alerts WHERE id = ?', [$alertId]);
+
+        if (!$alert || in_array($alert['status'], ['expired', 'cancelled', 'draft'], true)) {
+            return;
+        }
+
+        $db->transaction(function (Database $db) use ($alertId): void {
+            self::cancelPendingJobs($db, $alertId);
+            $db->execute(
+                "UPDATE alert_deliveries
+                 SET status = 'skipped', skip_reason = 'alert_expired'
+                 WHERE alert_id = ? AND status = 'queued'",
+                [$alertId]
+            );
+            $db->execute(
+                "UPDATE alerts SET status = 'expired' WHERE id = ? AND status NOT IN ('cancelled', 'expired')",
+                [$alertId]
+            );
         });
     }
 

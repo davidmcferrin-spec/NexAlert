@@ -25,6 +25,7 @@ use NexAlert\Config\Database;
 use NexAlert\Config\Env;
 use NexAlert\Services\AuditService;
 use NexAlert\Services\MailService;
+use NexAlert\Services\PollService;
 use NexAlert\Services\RowNormalizer;
 use NexAlert\Services\SmsConsentService;
 
@@ -290,15 +291,23 @@ class ProfileController
 
         $alerts = $db->fetchAll(
             'SELECT DISTINCT a.id, a.subject, a.body, a.severity, a.alert_type, a.status,
-                    a.ack_required, a.created_at, a.sent_at,
-                    (SELECT COUNT(*) FROM alert_acks aa WHERE aa.alert_id = a.id AND aa.user_id = ?) AS i_acked
+                    a.ack_required, a.created_at, a.sent_at, a.expires_at,
+                    a.poll_question, a.poll_options,
+                    (SELECT COUNT(*) FROM alert_acks aa WHERE aa.alert_id = a.id AND aa.user_id = ?) AS i_acked,
+                    (SELECT COUNT(*) FROM poll_responses pr WHERE pr.alert_id = a.id AND pr.user_id = ?) AS i_voted
              FROM alerts a
              JOIN alert_deliveries ad ON ad.alert_id = a.id
              WHERE ad.user_id = ?
              ORDER BY a.created_at DESC
              LIMIT ? OFFSET ?',
-            [$userId, $userId, $limit, $offset]
+            [$userId, $userId, $userId, $limit, $offset]
         );
+
+        foreach ($alerts as &$alert) {
+            $alert['poll_options'] = PollService::parsePollOptions($alert);
+            $alert['is_expired']   = PollService::isExpired($alert);
+        }
+        unset($alert);
 
         Response::success(['alerts' => $alerts, 'total' => $total, 'limit' => $limit, 'offset' => $offset]);
     }

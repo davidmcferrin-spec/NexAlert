@@ -2,8 +2,9 @@
 $pageTitle    = 'API Tokens';
 $pageSubtitle = 'System integration tokens for inbound alerts';
 
-$newTokenOnce = $_SESSION['new_token_display'] ?? null;
-unset($_SESSION['new_token_display']);
+$pending = $_SESSION['token_bearer_display'] ?? null;
+unset($_SESSION['token_bearer_display']);
+$newTokenOnce = is_array($pending) ? ($pending['raw'] ?? null) : $pending;
 
 $headerActions = '
 <a href="/admin/tokens/new"

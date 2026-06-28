@@ -19,11 +19,22 @@ $type     = htmlspecialchars((string) ($alert['alert_type'] ?? 'simple'));
 </div>
 <?php if (!empty($alert['poll_question']) && !empty($alert['poll_options'])): ?>
 <p style="font-size:14px;font-weight:600;color:#111827;"><?= htmlspecialchars((string) $alert['poll_question']) ?></p>
+<?php if (!empty($vote_links)): ?>
+<p style="margin-top:12px;">
+    <?php foreach ($vote_links as $link): ?>
+    <a href="<?= htmlspecialchars((string) ($link['url'] ?? '')) ?>"
+       style="display:inline-block;margin:4px 8px 4px 0;background:#2563eb;color:#fff;text-decoration:none;padding:10px 18px;border-radius:8px;font-weight:600;">
+        <?= htmlspecialchars((string) ($link['option'] ?? '')) ?>
+    </a>
+    <?php endforeach; ?>
+</p>
+<?php else: ?>
 <ul style="padding-left:20px;color:#374151;">
     <?php foreach ((array) $alert['poll_options'] as $opt): ?>
     <li><?= htmlspecialchars((string) $opt) ?></li>
     <?php endforeach; ?>
 </ul>
+<?php endif; ?>
 <?php endif; ?>
 <?php if (!empty($ack_url)): ?>
 <p style="margin-top:24px;">

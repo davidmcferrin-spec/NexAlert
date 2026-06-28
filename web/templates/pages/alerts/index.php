@@ -33,6 +33,7 @@ $headerActions = '
             <option value="sending">Sending</option>
             <option value="sent">Sent</option>
             <option value="cancelled">Cancelled</option>
+            <option value="expired">Expired</option>
         </select>
     </div>
 
@@ -106,6 +107,7 @@ $headerActions = '
                             · sends <span x-text="formatDate(detail?.send_at)"></span>
                         </span>
                         <span x-show="detail?.sent_at"> · sent <span x-text="formatDate(detail?.sent_at)"></span></span>
+                        <span x-show="detail?.expires_at"> · expires <span x-text="formatDate(detail?.expires_at)"></span></span>
                     </p>
                 </div>
                 <button @click="detail = null" class="text-gray-400 hover:text-gray-600 text-xl leading-none">&times;</button>
@@ -213,6 +215,36 @@ $headerActions = '
                         </template>
                     </ul>
                 </div>
+
+                <div x-show="detail?.alert_type === 'poll' && detail?.poll_results">
+                    <h4 class="text-sm font-semibold text-gray-900 dark:text-white mb-2">Poll results</h4>
+                    <p x-show="detail.poll_results.poll_question" class="text-sm text-gray-700 dark:text-gray-300 mb-2"
+                       x-text="detail.poll_results.poll_question"></p>
+                    <div class="overflow-x-auto rounded-xl border border-gray-200 dark:border-gray-800 mb-3">
+                        <table class="w-full text-xs">
+                            <thead class="bg-gray-50 dark:bg-gray-800/50">
+                                <tr>
+                                    <th class="text-left px-3 py-2 font-semibold text-gray-500">Option</th>
+                                    <th class="text-right px-3 py-2 font-semibold text-gray-500">Votes</th>
+                                    <th class="text-right px-3 py-2 font-semibold text-gray-500">%</th>
+                                </tr>
+                            </thead>
+                            <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
+                                <template x-for="o in (detail.poll_results.options || [])" :key="o.option">
+                                    <tr>
+                                        <td class="px-3 py-2 font-medium" x-text="o.option"></td>
+                                        <td class="px-3 py-2 text-right" x-text="o.count"></td>
+                                        <td class="px-3 py-2 text-right" x-text="o.percentage + '%'"></td>
+                                    </tr>
+                                </template>
+                            </tbody>
+                        </table>
+                    </div>
+                    <p class="text-xs text-gray-400">
+                        <span x-text="detail.poll_results.total || 0"></span> response(s)
+                        <span x-show="detail.poll_results.is_expired" class="text-amber-600"> · poll closed</span>
+                    </p>
+                </div>
             </div>
 
             <div class="px-6 py-3 border-t border-gray-100 dark:border-gray-800 text-right">
@@ -237,7 +269,7 @@ function alertHistoryPage() {
         },
         statusClass(s) {
             const m = { scheduled: 'bg-indigo-100 text-indigo-800', sending: 'bg-yellow-100 text-yellow-800', sent: 'bg-green-100 text-green-800',
-                cancelled: 'bg-gray-100 text-gray-600', draft: 'bg-gray-100 text-gray-500' };
+                cancelled: 'bg-gray-100 text-gray-600', expired: 'bg-amber-100 text-amber-800', draft: 'bg-gray-100 text-gray-500' };
             return m[s] || 'bg-gray-100 text-gray-600';
         },
         deliveryStatusClass(s) {

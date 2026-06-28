@@ -21,6 +21,7 @@ use NexAlert\Controllers\ProfileController;
 use NexAlert\Controllers\AlertController;
 use NexAlert\Controllers\WebhookController;
 use NexAlert\Controllers\DashboardController;
+use NexAlert\Controllers\PollController;
 use NexAlert\Middleware\AuthMiddleware;
 use NexAlert\Middleware\RateLimitMiddleware;
 use NexAlert\Middleware\SystemTokenMiddleware;
@@ -124,6 +125,7 @@ return function (Router $router): void {
     $router->group('/api/v1/tokens', function (Router $r): void {
         $r->get('/',             [TokenController::class, 'list'],   [AuthMiddleware::withPermission('system.token.manage')]);
         $r->post('/',            [TokenController::class, 'create'], [AuthMiddleware::withPermission('system.token.manage')]);
+        $r->post('/{id:\d+}/regenerate', [TokenController::class, 'regenerate'], [AuthMiddleware::withPermission('system.token.manage')]);
         $r->get('/{id:\d+}',    [TokenController::class, 'get'],    [AuthMiddleware::withPermission('system.token.manage')]);
         $r->put('/{id:\d+}',    [TokenController::class, 'update'], [AuthMiddleware::withPermission('system.token.manage')]);
         $r->delete('/{id:\d+}', [TokenController::class, 'delete'], [AuthMiddleware::withPermission('system.token.manage')]);
@@ -157,6 +159,7 @@ return function (Router $router): void {
         $r->get('/',               [AlertController::class, 'list'],  [AuthMiddleware::required()]);
         $r->get('/{id:\d+}',      [AlertController::class, 'get'],   [AuthMiddleware::required()]);
         $r->post('/{id:\d+}/ack',     [AlertController::class, 'ack'],    [AuthMiddleware::required()]);
+        $r->post('/{id:\d+}/poll',    [AlertController::class, 'poll'],   [AuthMiddleware::required()]);
         $r->post('/{id:\d+}/cancel',  [AlertController::class, 'cancel'], [AuthMiddleware::withPermission('alert.send')]);
         $r->post('/{id:\d+}/retry',   [AlertController::class, 'retry'],  [AuthMiddleware::withPermission('alert.send')]);
         $r->delete('/{id:\d+}',       [AlertController::class, 'delete'], [AuthMiddleware::required()]);
@@ -166,6 +169,7 @@ return function (Router $router): void {
     // Profile (user self-service)
     // -----------------------------------------------------------------------
     $router->get('/api/v1/profile/verify-email', [ProfileController::class, 'verifyEmailToken']);
+    $router->get('/api/v1/poll/vote', [PollController::class, 'voteViaLink']);
 
     $router->group('/api/v1/profile', function (Router $r): void {
         $r->get('/',                    [ProfileController::class, 'get'],                  [AuthMiddleware::required()]);

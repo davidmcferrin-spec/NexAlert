@@ -133,6 +133,7 @@ $routes = [
         '/admin/audit'            => 'audit/index',
         '/profile'                => 'profile/index',
         '/profile/verify-email'   => 'profile/verify_email',
+        '/poll/vote'              => 'poll/vote',
     ],
     'POST' => [
         '/admin/login'            => 'auth/login_post',
@@ -148,6 +149,7 @@ $routes = [
         '/admin/tags/save'        => 'tags/save',
         '/admin/tags/delete'      => 'tags/delete',
         '/admin/tokens/save'      => 'tokens/save',
+        '/admin/tokens/regenerate' => 'tokens/regenerate',
         '/admin/tokens/delete'    => 'tokens/delete',
     ],
 ];
@@ -157,8 +159,8 @@ $routes = [
 // -----------------------------------------------------------------------
 $page = $routes[$method][$uri] ?? $routes[$method][rtrim($uri, '/')] ?? null;
 
-$publicPages = ['auth/login', 'auth/login_post', 'auth/forgot_password', 'auth/reset_password', 'profile/verify_email'];
-$profilePages = ['profile/index', 'profile/verify_email'];
+$publicPages = ['auth/login', 'auth/login_post', 'auth/forgot_password', 'auth/reset_password', 'profile/verify_email', 'poll/vote'];
+$profilePages = ['profile/index', 'profile/verify_email', 'poll/vote'];
 $normalizedUri = rtrim($uri, '/') ?: '/';
 
 if (str_starts_with($normalizedUri, '/admin')) {
@@ -202,6 +204,7 @@ $actionPages = [
     'tags/save',
     'tags/delete',
     'tokens/save',
+    'tokens/regenerate',
     'tokens/delete',
 ];
 
