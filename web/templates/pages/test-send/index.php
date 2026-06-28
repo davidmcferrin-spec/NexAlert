@@ -88,6 +88,12 @@ $pageSubtitle = 'Preview alert recipients and build canonical target expressions
                                 class="ml-auto px-4 py-1.5 text-xs font-semibold rounded-lg bg-red-600 hover:bg-red-700 text-white">
                             Preview Recipients
                         </button>
+                        <a x-show="preview.valid && expression"
+                           href="/admin/alerts/new"
+                           @click="sessionStorage.setItem('nexalert_target_expression', expression)"
+                           class="px-3 py-1.5 text-xs font-semibold rounded-lg border border-red-600 text-red-600 hover:bg-red-50 dark:hover:bg-red-950">
+                            Send Alert →
+                        </a>
                     </div>
                     <div x-show="parseErrors.length" class="text-xs text-red-600 dark:text-red-400 space-y-1">
                         <template x-for="(err, i) in parseErrors" :key="i">

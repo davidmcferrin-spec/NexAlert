@@ -70,6 +70,44 @@ class MailService
     }
 
     /**
+     * Send an alert notification email to a recipient.
+     *
+     * @param array<string, mixed> $alert
+     */
+    public static function sendAlert(string $toEmail, array $alert, ?string $ackUrl = null): void
+    {
+        $severity = strtoupper((string) ($alert['severity'] ?? 'INFO'));
+        $subject  = "[NexAlert {$severity}] " . ($alert['subject'] ?? 'Alert');
+
+        $body = self::renderTemplate('alert_notification', [
+            'alert'      => $alert,
+            'ack_url'    => $ackUrl,
+            'app_name'   => Env::get('APP_NAME', 'NexAlert'),
+            'app_url'    => Env::get('APP_URL'),
+        ]);
+
+        self::send($toEmail, $subject, $body);
+    }
+
+    /**
+     * Send SMS opt-in message body (used by dispatch worker via Twilio directly).
+     */
+    public static function smsOptInMessage(): string
+    {
+        $app = Env::get('APP_NAME', 'NexAlert');
+
+        return "{$app}: Reply YES to receive emergency SMS alerts. Msg&data rates may apply. Reply STOP to cancel.";
+    }
+
+    /**
+     * Core send method using PHPMailer.
+     */
+    public static function sendRaw(string $to, string $subject, string $htmlBody): void
+    {
+        self::send($to, $subject, $htmlBody);
+    }
+
+    /**
      * Core send method using PHPMailer.
      */
     private static function send(string $to, string $subject, string $htmlBody): void

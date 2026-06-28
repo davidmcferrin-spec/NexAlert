@@ -16,8 +16,12 @@ use NexAlert\Controllers\TokenController;
 use NexAlert\Controllers\AuditController;
 use NexAlert\Controllers\TagController;
 use NexAlert\Controllers\TargetController;
+use NexAlert\Controllers\AlertController;
+use NexAlert\Controllers\ProfileController;
+use NexAlert\Controllers\WebhookController;
 use NexAlert\Middleware\AuthMiddleware;
 use NexAlert\Middleware\RateLimitMiddleware;
+use NexAlert\Middleware\SystemTokenMiddleware;
 
 return function (Router $router): void {
 
@@ -123,6 +127,43 @@ return function (Router $router): void {
         $r->post('/{id:\d+}/requests/{rid:\d+}/approve',    [TagController::class, 'approveRequest'],  [AuthMiddleware::required()]);
         $r->post('/{id:\d+}/requests/{rid:\d+}/deny',       [TagController::class, 'denyRequest'],     [AuthMiddleware::required()]);
     });
+
+    // -----------------------------------------------------------------------
+    // Alerts
+    // -----------------------------------------------------------------------
+    $router->post('/api/v1/alert', [AlertController::class, 'create'], [
+        SystemTokenMiddleware::required(),
+    ]);
+
+    $router->group('/api/v1/alerts', function (Router $r): void {
+        $r->post('/',              [AlertController::class, 'create'], [AuthMiddleware::withPermission('alert.send')]);
+        $r->get('/',               [AlertController::class, 'list'],  [AuthMiddleware::required()]);
+        $r->get('/{id:\d+}',      [AlertController::class, 'get'],   [AuthMiddleware::required()]);
+        $r->post('/{id:\d+}/ack',  [AlertController::class, 'ack'],   [AuthMiddleware::required()]);
+    });
+
+    // -----------------------------------------------------------------------
+    // Profile (user self-service)
+    // -----------------------------------------------------------------------
+    $router->get('/api/v1/profile/verify-email', [ProfileController::class, 'verifyEmailToken']);
+
+    $router->group('/api/v1/profile', function (Router $r): void {
+        $r->get('/',                    [ProfileController::class, 'get'],                  [AuthMiddleware::required()]);
+        $r->put('/',                    [ProfileController::class, 'update'],             [AuthMiddleware::required()]);
+        $r->get('/contacts',            [ProfileController::class, 'listContacts'],       [AuthMiddleware::required()]);
+        $r->post('/contacts',           [ProfileController::class, 'addContact'],         [AuthMiddleware::required()]);
+        $r->delete('/contacts/{id:\d+}', [ProfileController::class, 'deleteContact'],     [AuthMiddleware::required()]);
+        $r->post('/contacts/{id:\d+}/verify', [ProfileController::class, 'resendVerification'], [AuthMiddleware::required()]);
+        $r->post('/sms-optin',          [ProfileController::class, 'requestSmsOptIn'],    [AuthMiddleware::required()]);
+        $r->get('/notifications',       [ProfileController::class, 'getNotificationPrefs'], [AuthMiddleware::required()]);
+        $r->put('/notifications',       [ProfileController::class, 'updateNotificationPrefs'], [AuthMiddleware::required()]);
+        $r->get('/alerts',              [ProfileController::class, 'myAlerts'],             [AuthMiddleware::required()]);
+    });
+
+    // -----------------------------------------------------------------------
+    // Webhooks (no auth — validated by provider signature in production)
+    // -----------------------------------------------------------------------
+    $router->post('/api/v1/webhooks/twilio/sms', [WebhookController::class, 'twilioSms']);
 
     // -----------------------------------------------------------------------
     // Target preview (Test Send)

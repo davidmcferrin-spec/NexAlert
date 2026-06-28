@@ -914,7 +914,7 @@ class UserController
      * Normalize a phone number to E.164 format (basic US normalization).
      * Full international normalization should use a library in production.
      */
-    private static function normalizePhone(string $phone): string
+    public static function normalizePhone(string $phone): string
     {
         $digits = preg_replace('/\D/', '', $phone);
         if (strlen($digits) === 10) {

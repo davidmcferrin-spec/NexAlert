@@ -83,6 +83,20 @@ function render_auth(string $page, array $vars = []): void
     include NEXALERT_ROOT . '/web/templates/layouts/auth.php';
 }
 
+function render_profile(string $page, array $vars = []): void
+{
+    extract($vars, EXTR_SKIP);
+    $templatePath = NEXALERT_ROOT . '/web/templates/pages/' . $page . '.php';
+    if (!file_exists($templatePath)) {
+        http_response_code(404);
+        die("Page not found: {$page}");
+    }
+    ob_start();
+    include $templatePath;
+    $content = ob_get_clean();
+    include NEXALERT_ROOT . '/web/templates/layouts/profile.php';
+}
+
 // -----------------------------------------------------------------------
 // Route table
 // -----------------------------------------------------------------------
@@ -105,10 +119,16 @@ $routes = [
         '/admin/tags/new'         => 'tags/form',
         '/admin/tags/edit'        => 'tags/form',
         '/admin/test-send'        => 'test-send/index',
+        '/admin/alerts'           => 'alerts/form',
+        '/admin/alerts/new'       => 'alerts/form',
+        '/admin/alerts/history'   => 'alerts/index',
+        '/admin/alerts/send'      => 'alerts/form',
         '/admin/tokens'           => 'tokens/index',
         '/admin/tokens/new'       => 'tokens/form',
         '/admin/tokens/edit'      => 'tokens/form',
         '/admin/audit'            => 'audit/index',
+        '/profile'                => 'profile/index',
+        '/profile/verify-email'   => 'profile/verify_email',
     ],
     'POST' => [
         '/admin/login'            => 'auth/login_post',
@@ -133,7 +153,8 @@ $routes = [
 // -----------------------------------------------------------------------
 $page = $routes[$method][$uri] ?? $routes[$method][rtrim($uri, '/')] ?? null;
 
-$publicPages = ['auth/login', 'auth/login_post'];
+$publicPages = ['auth/login', 'auth/login_post', 'profile/verify_email'];
+$profilePages = ['profile/index', 'profile/verify_email'];
 $normalizedUri = rtrim($uri, '/') ?: '/';
 
 if (str_starts_with($normalizedUri, '/admin')) {
@@ -141,6 +162,12 @@ if (str_starts_with($normalizedUri, '/admin')) {
     if (!$isPublic) {
         require_auth();
     }
+}
+
+if ($page !== null && in_array($page, ['profile/index'], true) && !web_auth()) {
+    $_SESSION['redirect_after_login'] = $_SERVER['REQUEST_URI'] ?? '/profile';
+    header('Location: /admin/login');
+    exit;
 }
 
 if ($page === null) {
@@ -181,6 +208,11 @@ if (in_array($page, $actionPages, true)) {
 
 if ($page === 'auth/login') {
     render_auth($page);
+    exit;
+}
+
+if ($page !== null && in_array($page, $profilePages, true)) {
+    render_profile($page);
     exit;
 }
 
