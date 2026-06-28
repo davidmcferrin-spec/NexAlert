@@ -17,6 +17,7 @@ use NexAlert\Api\Response;
 use NexAlert\Config\Database;
 use NexAlert\Config\Logger;
 use NexAlert\Services\JwtService;
+use NexAlert\Services\PermissionService;
 
 class AuthMiddleware
 {
@@ -86,7 +87,10 @@ class AuthMiddleware
             Response::unauthorized('Account is inactive or locked');
         }
 
-        $request->user = array_merge($payload, ['db' => $user]);
+        $request->user = array_merge($payload, [
+            'db'          => $user,
+            'permissions' => PermissionService::loadForUser($db, (int) $payload['uid']),
+        ]);
     }
 
     /**
@@ -94,26 +98,9 @@ class AuthMiddleware
      */
     private static function authorize(Request $request, string $permission): void
     {
-        // super_admin bypasses all permission checks
-        if (in_array('super_admin', $request->user['roles'] ?? [], true)) {
-            return;
-        }
-
         $db = Database::getInstance();
 
-        // Check if any of the user's roles grant this permission
-        $granted = $db->fetchValue(
-            'SELECT COUNT(*)
-             FROM user_roles ur
-             JOIN role_permissions rp ON rp.role_id = ur.role_id
-             JOIN permissions p ON p.id = rp.permission_id
-             WHERE ur.user_id = ?
-               AND p.name = ?
-               AND (ur.expires_at IS NULL OR ur.expires_at > NOW())',
-            [$request->user['uid'], $permission]
-        );
-
-        if (!$granted) {
+        if (!PermissionService::hasPermission($db, $request->user, $permission)) {
             Logger::warning('Permission denied', [
                 'user'       => $request->user['uid'],
                 'permission' => $permission,

@@ -6,6 +6,8 @@ if (!web_auth()) {
     header('Location: /admin/login');
     exit;
 }
+
+$severities = ['test', 'info', 'notice', 'warning', 'critical', 'evacuation'];
 ?>
 
 <div x-data="profilePage()" x-init="init()" class="space-y-6">
@@ -14,17 +16,86 @@ if (!web_auth()) {
         <h2 class="text-sm font-semibold mb-4">Profile</h2>
         <div class="space-y-3">
             <div>
+                <label class="block text-xs text-gray-400 mb-1">Username</label>
+                <div class="text-sm text-gray-600 dark:text-gray-300 font-mono" x-text="profile.username"></div>
+            </div>
+            <div>
                 <label class="block text-xs text-gray-400 mb-1">Display name</label>
                 <input type="text" x-model="profile.display_name"
                        class="w-full px-3 py-2 text-sm rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800">
             </div>
             <div>
                 <label class="block text-xs text-gray-400 mb-1">Timezone</label>
-                <input type="text" x-model="profile.timezone"
+                <input type="text" x-model="profile.timezone" placeholder="America/Chicago"
                        class="w-full px-3 py-2 text-sm rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800">
             </div>
-            <button @click="saveProfile()" class="px-4 py-2 text-sm font-semibold bg-red-600 text-white rounded-xl">Save</button>
+            <button @click="saveProfile()" class="px-4 py-2 text-sm font-semibold bg-red-600 text-white rounded-xl">Save profile</button>
         </div>
+    </div>
+
+    <div class="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 p-6">
+        <h2 class="text-sm font-semibold mb-4">Change password</h2>
+        <div class="space-y-3 max-w-md">
+            <div>
+                <label class="block text-xs text-gray-400 mb-1">Current password</label>
+                <input type="password" autocomplete="current-password" x-model="passwordForm.current"
+                       class="w-full px-3 py-2 text-sm rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800">
+            </div>
+            <div>
+                <label class="block text-xs text-gray-400 mb-1">New password</label>
+                <input type="password" autocomplete="new-password" minlength="12" x-model="passwordForm.password"
+                       class="w-full px-3 py-2 text-sm rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800">
+            </div>
+            <div>
+                <label class="block text-xs text-gray-400 mb-1">Confirm new password</label>
+                <input type="password" autocomplete="new-password" minlength="12" x-model="passwordForm.confirm"
+                       class="w-full px-3 py-2 text-sm rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800">
+            </div>
+            <button @click="changePassword()" :disabled="passwordSaving"
+                    class="px-4 py-2 text-sm font-semibold bg-gray-800 dark:bg-gray-700 text-white rounded-xl disabled:opacity-60">
+                <span x-text="passwordSaving ? 'Saving…' : 'Update password'"></span>
+            </button>
+        </div>
+    </div>
+
+    <div class="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 p-6">
+        <h2 class="text-sm font-semibold mb-1">Notification preferences</h2>
+        <p class="text-xs text-gray-400 mb-4">Choose which channels receive alerts at each severity level.</p>
+        <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+                <thead>
+                    <tr class="text-xs text-gray-400 uppercase">
+                        <th class="text-left py-2 pr-4">Severity</th>
+                        <th class="text-center py-2 px-2">Email</th>
+                        <th class="text-center py-2 px-2">SMS</th>
+                        <th class="text-center py-2 px-2">In-app</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <template x-for="pref in notificationPrefs" :key="pref.severity">
+                        <tr class="border-t border-gray-100 dark:border-gray-800">
+                            <td class="py-2 pr-4 capitalize font-medium" x-text="pref.severity"></td>
+                            <td class="py-2 text-center">
+                                <input type="checkbox" :checked="pref.channel_email == 1"
+                                       @change="pref.channel_email = $event.target.checked ? 1 : 0"
+                                       class="rounded border-gray-300">
+                            </td>
+                            <td class="py-2 text-center">
+                                <input type="checkbox" :checked="pref.channel_sms == 1"
+                                       @change="pref.channel_sms = $event.target.checked ? 1 : 0"
+                                       class="rounded border-gray-300">
+                            </td>
+                            <td class="py-2 text-center">
+                                <input type="checkbox" :checked="pref.channel_in_app == 1"
+                                       @change="pref.channel_in_app = $event.target.checked ? 1 : 0"
+                                       class="rounded border-gray-300">
+                            </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+        </div>
+        <button @click="saveNotifications()" class="mt-4 px-4 py-2 text-sm font-semibold bg-red-600 text-white rounded-xl">Save preferences</button>
     </div>
 
     <div class="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 p-6">
@@ -64,18 +135,22 @@ if (!web_auth()) {
     <div class="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 p-6">
         <h2 class="text-sm font-semibold mb-4">My alerts</h2>
         <template x-for="a in myAlerts" :key="a.id">
-            <div class="py-3 border-b border-gray-100 dark:border-gray-800 last:border-0">
+            <div class="py-4 border-b border-gray-100 dark:border-gray-800 last:border-0">
                 <div class="flex items-start justify-between gap-3">
-                    <div>
-                        <div class="font-medium text-sm" x-text="a.subject"></div>
-                        <div class="text-xs text-gray-400 mt-1" x-text="a.severity + ' · ' + a.created_at"></div>
+                    <div class="min-w-0 flex-1">
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <span class="font-medium text-sm" x-text="a.subject"></span>
+                            <span class="text-xs px-2 py-0.5 rounded-full capitalize"
+                                  :class="severityBadge(a.severity)" x-text="a.severity"></span>
+                        </div>
+                        <div class="text-xs text-gray-400 mt-1" x-text="formatDate(a.created_at)"></div>
                         <p class="text-sm text-gray-600 dark:text-gray-400 mt-2 whitespace-pre-wrap" x-text="a.body"></p>
                     </div>
                     <button x-show="a.ack_required == 1 && a.i_acked == 0" @click="ackAlert(a)"
                             class="flex-shrink-0 px-3 py-1.5 text-xs font-semibold bg-red-600 text-white rounded-lg">
                         Acknowledge
                     </button>
-                    <span x-show="a.i_acked > 0" class="text-xs text-green-600">Acked</span>
+                    <span x-show="a.i_acked > 0" class="flex-shrink-0 text-xs text-green-600 font-medium">Acknowledged</span>
                 </div>
             </div>
         </template>
@@ -84,33 +159,95 @@ if (!web_auth()) {
 </div>
 
 <script>
+const SEVERITIES = <?= json_encode($severities, JSON_THROW_ON_ERROR) ?>;
+
 function profilePage() {
     return {
-        profile: {}, myAlerts: [],
+        profile: {}, myAlerts: [], notificationPrefs: [],
         newContact: { channel: 'email', contact_value: '' },
+        passwordForm: { current: '', password: '', confirm: '' },
+        passwordSaving: false,
         async init() {
-            const p = await api.get('/profile');
-            if (p.ok) this.profile = p.data.data;
+            await this.reloadProfile();
             const a = await api.get('/profile/alerts?limit=20');
             if (a.ok) this.myAlerts = a.data.data.alerts;
+            await this.loadNotifications();
             const params = new URLSearchParams(location.search);
             const ackId = params.get('ack_alert');
             if (ackId) this.ackAlert({ id: parseInt(ackId, 10) });
         },
+        severityBadge(s) {
+            const m = { test: 'bg-gray-100 text-gray-600', info: 'bg-blue-100 text-blue-700',
+                warning: 'bg-yellow-100 text-yellow-700', critical: 'bg-orange-100 text-orange-700',
+                evacuation: 'bg-red-100 text-red-700', notice: 'bg-indigo-100 text-indigo-700' };
+            return m[s] || 'bg-gray-100 text-gray-600';
+        },
+        formatDate(iso) {
+            if (!iso) return '';
+            try {
+                return new Date(iso.replace(' ', 'T') + 'Z').toLocaleString();
+            } catch (e) { return iso; }
+        },
+        async reloadProfile() {
+            const p = await api.get('/profile');
+            if (p.ok) this.profile = p.data.data;
+        },
+        async loadNotifications() {
+            const res = await api.get('/profile/notifications');
+            if (!res.ok) return;
+            const existing = res.data.data.prefs || [];
+            const bySev = Object.fromEntries(existing.map(p => [p.severity, p]));
+            this.notificationPrefs = SEVERITIES.map(sev => ({
+                severity: sev,
+                channel_email: bySev[sev]?.channel_email ?? 1,
+                channel_sms: bySev[sev]?.channel_sms ?? (['warning', 'critical', 'evacuation'].includes(sev) ? 1 : 0),
+                channel_in_app: bySev[sev]?.channel_in_app ?? 1,
+            }));
+        },
         async saveProfile() {
             const res = await api.put('/profile', { display_name: this.profile.display_name, timezone: this.profile.timezone });
-            toast(res.ok ? 'Saved' : (res.data?.error || 'Failed'), res.ok ? 'success' : 'error');
-            if (res.ok) { const p = await api.get('/profile'); if (p.ok) this.profile = p.data.data; }
+            toast(res.ok ? 'Profile saved' : (res.data?.error || 'Failed'), res.ok ? 'success' : 'error');
+            if (res.ok) await this.reloadProfile();
+        },
+        async changePassword() {
+            if (this.passwordForm.password !== this.passwordForm.confirm) {
+                toast('Passwords do not match', 'error');
+                return;
+            }
+            this.passwordSaving = true;
+            const res = await api.post('/profile/change-password', {
+                current_password: this.passwordForm.current,
+                password: this.passwordForm.password,
+                password_confirm: this.passwordForm.confirm,
+            });
+            this.passwordSaving = false;
+            if (res.ok) {
+                toast('Password updated');
+                this.passwordForm = { current: '', password: '', confirm: '' };
+            } else {
+                toast(res.data?.error || res.data?.errors?.password?.[0] || 'Failed', 'error');
+            }
+        },
+        async saveNotifications() {
+            const prefs = this.notificationPrefs.map(p => ({
+                severity: p.severity,
+                channel_email: p.channel_email == 1,
+                channel_sms: p.channel_sms == 1,
+                channel_in_app: p.channel_in_app == 1,
+            }));
+            const res = await api.put('/profile/notifications', { prefs });
+            toast(res.ok ? 'Preferences saved' : (res.data?.error || 'Failed'), res.ok ? 'success' : 'error');
         },
         async addContact() {
             const res = await api.post('/profile/contacts', this.newContact);
             toast(res.ok ? 'Contact added' : (res.data?.error || 'Failed'), res.ok ? 'success' : 'error');
-            if (res.ok) { this.newContact.contact_value = ''; const p = await api.get('/profile'); if (p.ok) this.profile = p.data.data; }
+            if (res.ok) { this.newContact.contact_value = ''; await this.reloadProfile(); }
         },
         async removeContact(c) {
             if (!confirm('Remove this contact?')) return;
             const res = await api.delete('/profile/contacts/' + c.id);
-            if (res.ok) { const p = await api.get('/profile'); if (p.ok) this.profile = p.data.data; }
+            if (res.ok) await this.reloadProfile();
+            else toast(res.data?.error || 'Failed', 'error');
         },
         async resendVerify(c) {
             const res = await api.post('/profile/contacts/' + c.id + '/verify', {});
@@ -123,7 +260,10 @@ function profilePage() {
         async ackAlert(a) {
             const res = await api.post('/alerts/' + a.id + '/ack', {});
             toast(res.ok ? 'Acknowledged' : (res.data?.error || 'Failed'), res.ok ? 'success' : 'error');
-            if (res.ok) { const r = await api.get('/profile/alerts'); if (r.ok) this.myAlerts = r.data.data.alerts; }
+            if (res.ok) {
+                const r = await api.get('/profile/alerts');
+                if (r.ok) this.myAlerts = r.data.data.alerts;
+            }
         }
     };
 }

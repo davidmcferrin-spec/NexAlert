@@ -32,6 +32,22 @@
         <?= $content ?? '' ?>
     </main>
 </div>
+
+<div class="fixed bottom-4 right-4 z-50 space-y-2"
+     x-data="toasts()"
+     @toast.window="add($event.detail)">
+    <template x-for="toast in list" :key="toast.id">
+        <div class="flex items-center gap-3 px-4 py-3 rounded-xl shadow-lg text-sm font-medium max-w-sm border"
+             :class="toast.type === 'error'
+                ? 'bg-red-50 dark:bg-red-950 border-red-200 dark:border-red-800 text-red-700 dark:text-red-400'
+                : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 text-gray-900 dark:text-gray-100'"
+             x-transition>
+            <span x-text="toast.message" class="flex-1"></span>
+            <button @click="remove(toast.id)" class="opacity-50 hover:opacity-100">✕</button>
+        </div>
+    </template>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
 <script>
 const api = {
@@ -57,7 +73,20 @@ function nexalert() {
         toggleDark() { this.darkMode = !this.darkMode; localStorage.setItem('nexalert_dark', this.darkMode ? '1' : '0'); }
     };
 }
-function toast(msg, type='success') { alert((type==='error'?'Error: ':'') + msg); }
+function toasts() {
+    return {
+        list: [], nextId: 1,
+        add({ message, type = 'success', duration = 4000 }) {
+            const id = this.nextId++;
+            this.list.push({ id, message, type });
+            setTimeout(() => this.remove(id), duration);
+        },
+        remove(id) { this.list = this.list.filter(t => t.id !== id); }
+    };
+}
+function toast(message, type = 'success') {
+    window.dispatchEvent(new CustomEvent('toast', { detail: { message, type } }));
+}
 </script>
 <?= $scripts ?? '' ?>
 </body>

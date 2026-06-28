@@ -14,6 +14,9 @@
  * GET    /api/v1/users/{id}/tags              → list user tags
  * POST   /api/v1/users/{id}/tags              → manually assign tag
  * DELETE /api/v1/users/{id}/tags/{tag_id}     → remove manual tag
+ * GET    /api/v1/users/{id}/roles             → list role assignments
+ * POST   /api/v1/users/{id}/roles             → assign scoped role
+ * DELETE /api/v1/users/{id}/roles/{rid}       → revoke role assignment
  */
 
 declare(strict_types=1);
@@ -25,6 +28,7 @@ use NexAlert\Api\Response;
 use NexAlert\Config\Database;
 use NexAlert\Config\Env;
 use NexAlert\Services\AuditService;
+use NexAlert\Services\PermissionService;
 use NexAlert\Services\RowNormalizer;
 use NexAlert\Services\TagService;
 
@@ -693,6 +697,127 @@ class UserController
         Response::success(null, 'Tag removed');
     }
 
+    /**
+     * GET /api/v1/users/{id}/roles
+     */
+    public static function listRoles(Request $request): never
+    {
+        $id = (int) $request->param('id');
+        $db = Database::getInstance();
+
+        self::assertUserAccess($request, $id, $db);
+
+        Response::success(['roles' => self::fetchUserRoles($db, $id)]);
+    }
+
+    /**
+     * POST /api/v1/users/{id}/roles
+     */
+    public static function assignRole(Request $request): never
+    {
+        $id     = (int) $request->param('id');
+        $roleId = (int) $request->input('role_id', 0);
+        $db     = Database::getInstance();
+
+        if (!$roleId) {
+            Response::validationError(['role_id' => 'Required']);
+        }
+
+        self::assertUserAccess($request, $id, $db);
+
+        $user = $db->fetchOne('SELECT id, home_org_id FROM users WHERE id = ? AND is_active = 1', [$id]);
+        if (!$user) {
+            Response::notFound('User not found');
+        }
+
+        $role = $db->fetchOne('SELECT id, name FROM roles WHERE id = ?', [$roleId]);
+        if (!$role) {
+            Response::notFound('Role not found');
+        }
+
+        if ($role['name'] === 'super_admin' && !PermissionService::isSuperAdmin($request->user)) {
+            Response::forbidden('Only super administrators can assign the super_admin role');
+        }
+
+        $scope = self::parseRoleScope($request, $db);
+        self::assertScopeGrantable($request, $db, $scope);
+
+        $expiresAt = $request->input('expires_at');
+        $expiresAt = is_string($expiresAt) && trim($expiresAt) !== '' ? trim($expiresAt) : null;
+
+        try {
+            $db->execute(
+                'INSERT INTO user_roles
+                    (user_id, role_id, org_id, org_node_id, group_id, tag_id, granted_by, expires_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                [
+                    $id,
+                    $roleId,
+                    $scope['org_id'],
+                    $scope['org_node_id'],
+                    $scope['group_id'],
+                    $scope['tag_id'],
+                    $request->user['uid'],
+                    $expiresAt,
+                ]
+            );
+        } catch (\PDOException) {
+            Response::error('This role assignment already exists for this scope', 409);
+        }
+
+        $urId = (int) $db->lastInsertId();
+
+        AuditService::log('user.role_assigned', 'user', (string) $id, [
+            'user_role_id' => $urId,
+            'role_id'      => $roleId,
+            'role_name'    => $role['name'],
+            'scope_type'   => $scope['scope_type'],
+            'org_id'       => $scope['org_id'],
+            'org_node_id'  => $scope['org_node_id'],
+            'group_id'     => $scope['group_id'],
+            'tag_id'       => $scope['tag_id'],
+        ], (int) $request->user['uid']);
+
+        Response::success(['assignment' => self::fetchUserRoleById($db, $urId)], 'Role assigned', 201);
+    }
+
+    /**
+     * DELETE /api/v1/users/{id}/roles/{rid}
+     */
+    public static function removeRole(Request $request): never
+    {
+        $id  = (int) $request->param('id');
+        $rid = (int) $request->param('rid');
+        $db  = Database::getInstance();
+
+        self::assertUserAccess($request, $id, $db);
+
+        $assignment = $db->fetchOne(
+            'SELECT ur.*, r.name AS role_name
+             FROM user_roles ur
+             JOIN roles r ON r.id = ur.role_id
+             WHERE ur.id = ? AND ur.user_id = ?',
+            [$rid, $id]
+        );
+
+        if (!$assignment) {
+            Response::notFound('Role assignment not found');
+        }
+
+        if ($assignment['role_name'] === 'super_admin' && !PermissionService::isSuperAdmin($request->user)) {
+            Response::forbidden('Only super administrators can revoke the super_admin role');
+        }
+
+        $db->execute('DELETE FROM user_roles WHERE id = ?', [$rid]);
+
+        AuditService::log('user.role_revoked', 'user', (string) $id, [
+            'user_role_id' => $rid,
+            'role_name'    => $assignment['role_name'],
+        ], (int) $request->user['uid']);
+
+        Response::success(null, 'Role revoked');
+    }
+
     // -----------------------------------------------------------------------
     // Internal helpers
     // -----------------------------------------------------------------------
@@ -814,12 +939,7 @@ class UserController
             [$id]
         );
 
-        $user['roles'] = $db->fetchAll(
-            'SELECT r.id, r.name, r.display_name, ur.org_id, ur.org_node_id, ur.expires_at
-             FROM roles r JOIN user_roles ur ON ur.role_id = r.id
-             WHERE ur.user_id = ? AND (ur.expires_at IS NULL OR ur.expires_at > NOW())',
-            [$id]
-        );
+        $user['roles'] = self::fetchUserRoles($db, $id);
 
         $user = RowNormalizer::flags($user, ['is_active', 'is_locked', 'home_override']);
         $user['contacts'] = RowNormalizer::mapFlags(
@@ -954,5 +1074,233 @@ class UserController
         }
 
         Response::forbidden('Access denied to this user');
+    }
+
+    /** @return list<array<string, mixed>> */
+    private static function fetchUserRoles(Database $db, int $userId): array
+    {
+        $rows = $db->fetchAll(
+            'SELECT ur.id AS user_role_id, r.id AS role_id, r.name, r.display_name,
+                    ur.org_id, ur.org_node_id, ur.group_id, ur.tag_id, ur.expires_at, ur.granted_at,
+                    o.name AS org_name,
+                    n.name AS node_name, n.path AS node_path,
+                    g.name AS group_name,
+                    t.name AS tag_name
+             FROM user_roles ur
+             JOIN roles r ON r.id = ur.role_id
+             LEFT JOIN organizations o ON o.id = ur.org_id
+             LEFT JOIN org_nodes n ON n.id = ur.org_node_id
+             LEFT JOIN `groups` g ON g.id = ur.group_id
+             LEFT JOIN tags t ON t.id = ur.tag_id
+             WHERE ur.user_id = ? AND (ur.expires_at IS NULL OR ur.expires_at > NOW())
+             ORDER BY r.name, ur.granted_at DESC',
+            [$userId]
+        );
+
+        foreach ($rows as &$row) {
+            $row['scope_type']  = self::scopeTypeFromRow($row);
+            $row['scope_label'] = self::scopeLabelFromRow($row);
+        }
+        unset($row);
+
+        return $rows;
+    }
+
+    /** @return array<string, mixed>|null */
+    private static function fetchUserRoleById(Database $db, int $userRoleId): ?array
+    {
+        $row = $db->fetchOne(
+            'SELECT ur.id AS user_role_id, r.id AS role_id, r.name, r.display_name,
+                    ur.org_id, ur.org_node_id, ur.group_id, ur.tag_id, ur.expires_at, ur.granted_at,
+                    o.name AS org_name,
+                    n.name AS node_name,
+                    g.name AS group_name,
+                    t.name AS tag_name
+             FROM user_roles ur
+             JOIN roles r ON r.id = ur.role_id
+             LEFT JOIN organizations o ON o.id = ur.org_id
+             LEFT JOIN org_nodes n ON n.id = ur.org_node_id
+             LEFT JOIN `groups` g ON g.id = ur.group_id
+             LEFT JOIN tags t ON t.id = ur.tag_id
+             WHERE ur.id = ?',
+            [$userRoleId]
+        );
+
+        if (!$row) {
+            return null;
+        }
+
+        $row['scope_type']  = self::scopeTypeFromRow($row);
+        $row['scope_label'] = self::scopeLabelFromRow($row);
+
+        return $row;
+    }
+
+    /** @param array<string, mixed> $row */
+    private static function scopeTypeFromRow(array $row): string
+    {
+        if (!empty($row['group_id'])) {
+            return 'group';
+        }
+        if (!empty($row['tag_id'])) {
+            return 'tag';
+        }
+        if (!empty($row['org_node_id'])) {
+            return 'node';
+        }
+        if (!empty($row['org_id'])) {
+            return 'org';
+        }
+
+        return 'global';
+    }
+
+    /** @param array<string, mixed> $row */
+    private static function scopeLabelFromRow(array $row): string
+    {
+        return match (self::scopeTypeFromRow($row)) {
+            'group'  => 'Group: ' . ($row['group_name'] ?? $row['group_id']),
+            'tag'    => 'Tag: ' . ($row['tag_name'] ?? $row['tag_id']),
+            'node'   => 'Tree: ' . ($row['org_name'] ?? 'Org') . ' → ' . ($row['node_name'] ?? $row['org_node_id']),
+            'org'    => 'Org: ' . ($row['org_name'] ?? $row['org_id']),
+            default  => 'Global',
+        };
+    }
+
+    /**
+     * @return array{
+     *   scope_type: string,
+     *   org_id: ?int,
+     *   org_node_id: ?int,
+     *   group_id: ?int,
+     *   tag_id: ?int
+     * }
+     */
+    private static function parseRoleScope(Request $request, Database $db): array
+    {
+        $scopeType = strtolower(trim((string) $request->input('scope_type', 'org')));
+        $validTypes = ['global', 'org', 'node', 'group', 'tag'];
+        if (!in_array($scopeType, $validTypes, true)) {
+            Response::validationError(['scope_type' => 'Must be one of: ' . implode(', ', $validTypes)]);
+        }
+
+        $scope = [
+            'scope_type'  => $scopeType,
+            'org_id'      => null,
+            'org_node_id' => null,
+            'group_id'    => null,
+            'tag_id'      => null,
+        ];
+
+        if ($scopeType === 'global') {
+            return $scope;
+        }
+
+        if ($scopeType === 'org') {
+            $orgId = (int) $request->input('org_id', 0);
+            if (!$orgId) {
+                Response::validationError(['org_id' => 'Required for org scope']);
+            }
+            if (!$db->fetchValue('SELECT id FROM organizations WHERE id = ?', [$orgId])) {
+                Response::validationError(['org_id' => 'Organization not found']);
+            }
+            $scope['org_id'] = $orgId;
+
+            return $scope;
+        }
+
+        if ($scopeType === 'node') {
+            $orgId  = (int) $request->input('org_id', 0);
+            $nodeId = (int) $request->input('org_node_id', 0);
+            if (!$orgId || !$nodeId) {
+                Response::validationError([
+                    'org_id'      => 'Required for node scope',
+                    'org_node_id' => 'Required for node scope',
+                ]);
+            }
+            $node = $db->fetchOne(
+                'SELECT id, org_id FROM org_nodes WHERE id = ? AND is_active = 1',
+                [$nodeId]
+            );
+            if (!$node || (int) $node['org_id'] !== $orgId) {
+                Response::validationError(['org_node_id' => 'Node not found in this organization']);
+            }
+            $scope['org_id']      = $orgId;
+            $scope['org_node_id'] = $nodeId;
+
+            return $scope;
+        }
+
+        if ($scopeType === 'group') {
+            $groupId = (int) $request->input('group_id', 0);
+            if (!$groupId) {
+                Response::validationError(['group_id' => 'Required for group scope']);
+            }
+            if (!$db->fetchValue('SELECT id FROM `groups` WHERE id = ? AND is_active = 1', [$groupId])) {
+                Response::validationError(['group_id' => 'Group not found']);
+            }
+            $scope['group_id'] = $groupId;
+
+            return $scope;
+        }
+
+        $tagId = (int) $request->input('tag_id', 0);
+        if (!$tagId) {
+            Response::validationError(['tag_id' => 'Required for tag scope']);
+        }
+        if (!$db->fetchValue('SELECT id FROM tags WHERE id = ? AND is_active = 1', [$tagId])) {
+            Response::validationError(['tag_id' => 'Tag not found']);
+        }
+        $scope['tag_id'] = $tagId;
+
+        return $scope;
+    }
+
+    /**
+     * @param array{
+     *   scope_type: string,
+     *   org_id: ?int,
+     *   org_node_id: ?int,
+     *   group_id: ?int,
+     *   tag_id: ?int
+     * } $scope
+     */
+    private static function assertScopeGrantable(Request $request, Database $db, array $scope): void
+    {
+        if (PermissionService::isSuperAdmin($request->user)) {
+            return;
+        }
+
+        $actorOrgId = (int) $request->user['org'];
+
+        if ($scope['scope_type'] === 'global') {
+            Response::forbidden('Only super administrators can assign global-scoped roles');
+        }
+
+        if ($scope['scope_type'] === 'org' || $scope['scope_type'] === 'node') {
+            if ((int) $scope['org_id'] !== $actorOrgId) {
+                Response::forbidden('Cannot assign roles outside your organization');
+            }
+            return;
+        }
+
+        if ($scope['scope_type'] === 'group') {
+            $group = $db->fetchOne('SELECT owner_org_id FROM `groups` WHERE id = ?', [$scope['group_id']]);
+            if (!$group || (int) $group['owner_org_id'] !== $actorOrgId) {
+                Response::forbidden('Cannot assign roles for groups outside your organization');
+            }
+            return;
+        }
+
+        if ($scope['scope_type'] === 'tag') {
+            $tag = $db->fetchOne('SELECT owner_org_id FROM tags WHERE id = ?', [$scope['tag_id']]);
+            if (!$tag) {
+                Response::forbidden('Tag not found');
+            }
+            $ownerOrgId = $tag['owner_org_id'] !== null ? (int) $tag['owner_org_id'] : null;
+            if ($ownerOrgId !== null && $ownerOrgId !== $actorOrgId) {
+                Response::forbidden('Cannot assign roles for tags outside your organization');
+            }
+        }
     }
 }

@@ -63,7 +63,7 @@ def env(key: str, default: str = "") -> str:
 
 
 def db_connect():
-    return pymysql.connect(
+    conn = pymysql.connect(
         host=env("DB_HOST", "127.0.0.1"),
         port=int(env("DB_PORT", "3306")),
         user=env("DB_USER"),
@@ -73,6 +73,10 @@ def db_connect():
         cursorclass=pymysql.cursors.DictCursor,
         autocommit=False,
     )
+    with conn.cursor() as cur:
+        cur.execute("SET SESSION time_zone = '+00:00'")
+    conn.commit()
+    return conn
 
 
 def claim_job(conn) -> dict | None:

@@ -104,6 +104,8 @@ $routes = [
     'GET'  => [
         '/admin/login'            => 'auth/login',
         '/admin/logout'           => 'auth/logout',
+        '/forgot-password'        => 'auth/forgot_password',
+        '/reset-password'         => 'auth/reset_password',
         '/admin'                  => 'dashboard',
         '/admin/orgs'             => 'orgs/index',
         '/admin/orgs/new'         => 'orgs/form',
@@ -153,7 +155,7 @@ $routes = [
 // -----------------------------------------------------------------------
 $page = $routes[$method][$uri] ?? $routes[$method][rtrim($uri, '/')] ?? null;
 
-$publicPages = ['auth/login', 'auth/login_post', 'profile/verify_email'];
+$publicPages = ['auth/login', 'auth/login_post', 'auth/forgot_password', 'auth/reset_password', 'profile/verify_email'];
 $profilePages = ['profile/index', 'profile/verify_email'];
 $normalizedUri = rtrim($uri, '/') ?: '/';
 
@@ -206,7 +208,7 @@ if (in_array($page, $actionPages, true)) {
     exit;
 }
 
-if ($page === 'auth/login') {
+if ($page === 'auth/login' || $page === 'auth/forgot_password' || $page === 'auth/reset_password') {
     render_auth($page);
     exit;
 }

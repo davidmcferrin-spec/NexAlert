@@ -75,6 +75,10 @@ class AlertService
             Response::validationError(['targets' => 'No active recipients match the target expression']);
         }
 
+        if ($createdByUser !== null && empty($request->token)) {
+            SendScopeService::assertUserCanTarget($db, $request->user, $targetRows, $orgId);
+        }
+
         $ackRequired = $alertType === 'ack_required' || (bool) $request->input('ack_required', false);
         $ackDeadline = $request->input('ack_deadline_minutes') !== null
             ? (int) $request->input('ack_deadline_minutes') : null;
@@ -270,17 +274,14 @@ class AlertService
 
     private static function assertUserCanSend(Request $request, string $severity): void
     {
-        if (in_array('super_admin', $request->user['roles'] ?? [], true)) {
-            return;
-        }
+        $db = Database::getInstance();
 
-        $perms = $request->user['permissions'] ?? [];
-        if (!in_array('alert.send', $perms, true)) {
+        if (!PermissionService::hasPermission($db, $request->user, 'alert.send')) {
             Response::forbidden('alert.send permission required');
         }
 
         if (in_array($severity, ['critical', 'evacuation'], true)
-            && !in_array('alert.send.critical', $perms, true)) {
+            && !PermissionService::hasPermission($db, $request->user, 'alert.send.critical')) {
             Response::forbidden('alert.send.critical permission required for critical/evacuation alerts');
         }
     }
@@ -491,5 +492,115 @@ class AlertService
             'delivery_stats'   => $deliveryStats,
             'targets'          => $targets,
         ];
+    }
+
+    /**
+     * Cancel a pending or in-flight alert and mark queued deliveries skipped.
+     */
+    public static function cancel(int $alertId): void
+    {
+        $db    = Database::getInstance();
+        $alert = $db->fetchOne('SELECT id, status FROM alerts WHERE id = ?', [$alertId]);
+
+        if (!$alert) {
+            Response::notFound('Alert not found');
+        }
+
+        if (!in_array($alert['status'], ['draft', 'scheduled', 'sending'], true)) {
+            Response::error('Only draft, scheduled, or sending alerts can be cancelled', 409);
+        }
+
+        $db->transaction(function (Database $db) use ($alertId): void {
+            self::cancelPendingJobs($db, $alertId);
+            $db->execute(
+                "UPDATE alert_deliveries SET status = 'skipped', skip_reason = 'alert_cancelled'
+                 WHERE alert_id = ? AND status = 'queued'",
+                [$alertId]
+            );
+            $db->execute(
+                "UPDATE alerts SET status = 'cancelled' WHERE id = ?",
+                [$alertId]
+            );
+        });
+    }
+
+    /**
+     * Re-queue dispatch for failed or cancelled deliveries.
+     */
+    public static function retry(int $alertId): void
+    {
+        $db    = Database::getInstance();
+        $alert = $db->fetchOne('SELECT id, status FROM alerts WHERE id = ?', [$alertId]);
+
+        if (!$alert) {
+            Response::notFound('Alert not found');
+        }
+
+        if (!in_array($alert['status'], ['sending', 'sent', 'cancelled'], true)) {
+            Response::error('This alert cannot be retried', 409);
+        }
+
+        $retryable = (int) $db->fetchValue(
+            "SELECT COUNT(*) FROM alert_deliveries
+             WHERE alert_id = ? AND (
+                status = 'failed'
+                OR status = 'queued'
+                OR (status = 'skipped' AND skip_reason IN ('alert_cancelled', 'dispatch_error'))
+             )",
+            [$alertId]
+        );
+
+        if ($retryable === 0 && $alert['status'] !== 'cancelled') {
+            Response::error('No failed or pending deliveries to retry', 409);
+        }
+
+        $db->transaction(function (Database $db) use ($alertId): void {
+            self::cancelPendingJobs($db, $alertId);
+            $db->execute(
+                "UPDATE alert_deliveries
+                 SET status = 'queued', skip_reason = NULL, failed_at = NULL,
+                     sent_at = NULL, provider_message_id = NULL, retry_count = retry_count + 1
+                 WHERE alert_id = ? AND (
+                    status IN ('failed', 'queued')
+                    OR (status = 'skipped' AND skip_reason IN ('alert_cancelled', 'dispatch_error'))
+                 )",
+                [$alertId]
+            );
+            $db->execute(
+                "UPDATE alerts SET status = 'sending', sent_at = NULL WHERE id = ?",
+                [$alertId]
+            );
+            JobQueueService::pushAlertDispatch($alertId);
+        });
+    }
+
+    /**
+     * Permanently remove an alert and its delivery records (cascade).
+     */
+    public static function delete(int $alertId): void
+    {
+        $db    = Database::getInstance();
+        $alert = $db->fetchOne('SELECT id, severity FROM alerts WHERE id = ?', [$alertId]);
+
+        if (!$alert) {
+            Response::notFound('Alert not found');
+        }
+
+        $db->transaction(function (Database $db) use ($alertId): void {
+            self::cancelPendingJobs($db, $alertId);
+            $db->execute('DELETE FROM alerts WHERE id = ?', [$alertId]);
+        });
+    }
+
+    public static function cancelPendingJobs(Database $db, int $alertId): int
+    {
+        $stmt = $db->execute(
+            "UPDATE jobs SET status = 'failed', error = 'alert_cancelled', failed_at = UTC_TIMESTAMP()
+             WHERE queue = ? AND status IN ('pending', 'processing')
+               AND CAST(JSON_UNQUOTE(JSON_EXTRACT(payload, '$.data.alert_id')) AS UNSIGNED) = ?",
+            [JobQueueService::QUEUE_DISPATCH, $alertId]
+        );
+
+        return $stmt->rowCount();
     }
 }

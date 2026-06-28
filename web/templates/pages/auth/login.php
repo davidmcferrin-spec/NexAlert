@@ -75,7 +75,7 @@ unset($_SESSION['login_error']);
             </div>
 
             <div class="mt-4 text-center">
-                <a href="/admin/forgot-password" class="text-sm text-red-600 dark:text-red-400 hover:underline">
+                <a href="/forgot-password" class="text-sm text-red-600 dark:text-red-400 hover:underline">
                     Forgot password?
                 </a>
             </div>

@@ -42,7 +42,7 @@ $headerActions = '
                     <th class="text-center px-5 py-3 text-xs font-semibold text-gray-500 uppercase">Recipients</th>
                     <th class="text-center px-5 py-3 text-xs font-semibold text-gray-500 uppercase hidden lg:table-cell">Sent</th>
                     <th class="text-center px-5 py-3 text-xs font-semibold text-gray-500 uppercase">Status</th>
-                    <th class="px-5 py-3"></th>
+                    <th class="px-5 py-3 text-right text-xs font-semibold text-gray-500 uppercase">Actions</th>
                 </tr>
             </thead>
             <tbody class="divide-y divide-gray-100 dark:divide-gray-800">
@@ -57,12 +57,22 @@ $headerActions = '
                                   :class="severityClass(a.severity)" x-text="a.severity"></span>
                         </td>
                         <td class="px-5 py-3 text-center text-gray-500" x-text="a.recipient_count"></td>
-                        <td class="px-5 py-3 text-center text-gray-500 hidden lg:table-cell" x-text="a.sent_count ?? '—'"></td>
-                        <td class="px-5 py-3 text-center">
-                            <span class="text-xs capitalize" x-text="a.status"></span>
+                        <td class="px-5 py-3 text-center text-gray-500 hidden lg:table-cell">
+                            <span x-text="a.sent_count ?? '—'"></span>
+                            <span x-show="a.failed_count > 0" class="text-red-500 text-xs" x-text="' (' + a.failed_count + ' failed)'"></span>
                         </td>
-                        <td class="px-5 py-3 text-right">
-                            <button @click="viewDetail(a)" class="text-xs text-gray-400 hover:text-red-600">Details</button>
+                        <td class="px-5 py-3 text-center">
+                            <span class="text-xs capitalize px-2 py-0.5 rounded-full"
+                                  :class="statusClass(a.status)" x-text="a.status"></span>
+                        </td>
+                        <td class="px-5 py-3 text-right whitespace-nowrap">
+                            <button @click="viewDetail(a)" class="text-xs text-gray-400 hover:text-red-600 mr-2">Details</button>
+                            <button x-show="canCancel(a)" @click="cancelAlert(a)" :disabled="actionId === a.id"
+                                    class="text-xs text-amber-600 hover:text-amber-700 mr-2 disabled:opacity-50">Cancel</button>
+                            <button x-show="canRetry(a)" @click="retryAlert(a)" :disabled="actionId === a.id"
+                                    class="text-xs text-blue-600 hover:text-blue-700 mr-2 disabled:opacity-50">Retry</button>
+                            <button x-show="canDelete(a)" @click="deleteAlert(a)" :disabled="actionId === a.id"
+                                    class="text-xs text-red-500 hover:text-red-700 disabled:opacity-50">Delete</button>
                         </td>
                     </tr>
                 </template>
@@ -90,6 +100,14 @@ $headerActions = '
                 ·
                 <span x-text="'Failed: ' + (detail?.delivery_stats?.failed ?? 0)"></span>
             </div>
+            <div class="flex flex-wrap gap-2 mb-4" x-show="detail">
+                <button x-show="canCancel(detail)" @click="cancelAlert(detail, true)"
+                        class="px-3 py-1.5 text-xs font-semibold bg-amber-100 text-amber-800 rounded-lg">Cancel</button>
+                <button x-show="canRetry(detail)" @click="retryAlert(detail, true)"
+                        class="px-3 py-1.5 text-xs font-semibold bg-blue-100 text-blue-800 rounded-lg">Retry delivery</button>
+                <button x-show="canDelete(detail)" @click="deleteAlert(detail, true)"
+                        class="px-3 py-1.5 text-xs font-semibold bg-red-100 text-red-800 rounded-lg">Delete</button>
+            </div>
             <button @click="detail = null" class="text-sm text-gray-500 hover:text-gray-700">Close</button>
         </div>
     </div>
@@ -98,13 +116,33 @@ $headerActions = '
 <script>
 function alertHistoryPage() {
     return {
-        alerts: [], loading: true, search: '', filterSeverity: 'all', filterStatus: 'all', detail: null,
+        alerts: [], loading: true, search: '', filterSeverity: 'all', filterStatus: 'all',
+        detail: null, actionId: null,
         async init() { await this.load(); },
         severityClass(s) {
             const m = { test: 'bg-gray-100 text-gray-600', info: 'bg-blue-100 text-blue-700',
                 warning: 'bg-yellow-100 text-yellow-700', critical: 'bg-orange-100 text-orange-700',
                 evacuation: 'bg-red-100 text-red-700', notice: 'bg-indigo-100 text-indigo-700' };
             return m[s] || 'bg-gray-100 text-gray-600';
+        },
+        statusClass(s) {
+            const m = { sending: 'bg-yellow-100 text-yellow-800', sent: 'bg-green-100 text-green-800',
+                cancelled: 'bg-gray-100 text-gray-600', draft: 'bg-gray-100 text-gray-500' };
+            return m[s] || 'bg-gray-100 text-gray-600';
+        },
+        canCancel(a) {
+            return a && ['draft', 'scheduled', 'sending'].includes(a.status);
+        },
+        canRetry(a) {
+            if (!a) return false;
+            if (a.status === 'cancelled') return true;
+            if (['sending', 'sent'].includes(a.status)) {
+                return (a.failed_count > 0) || (a.status === 'sending' && (a.sent_count || 0) < (a.recipient_count || 0));
+            }
+            return false;
+        },
+        canDelete(a) {
+            return a && (a.severity === 'test' || true);
         },
         async load() {
             this.loading = true;
@@ -119,8 +157,42 @@ function alertHistoryPage() {
         },
         async viewDetail(a) {
             const res = await api.get('/alerts/' + a.id);
-            if (res.ok) this.detail = res.data.data;
-            else toast(res.data?.error || 'Failed', 'error');
+            if (res.ok) {
+                this.detail = { ...res.data.data, failed_count: a.failed_count, recipient_count: a.recipient_count };
+            } else toast(res.data?.error || 'Failed', 'error');
+        },
+        async cancelAlert(a, fromModal = false) {
+            if (!confirm('Cancel this alert? Pending deliveries will be stopped.')) return;
+            this.actionId = a.id;
+            const res = await api.post('/alerts/' + a.id + '/cancel', {});
+            this.actionId = null;
+            if (res.ok) {
+                toast('Alert cancelled');
+                if (fromModal) this.detail = null;
+                await this.load();
+            } else toast(res.data?.error || 'Cancel failed', 'error');
+        },
+        async retryAlert(a, fromModal = false) {
+            if (!confirm('Re-queue failed or pending deliveries for this alert?')) return;
+            this.actionId = a.id;
+            const res = await api.post('/alerts/' + a.id + '/retry', {});
+            this.actionId = null;
+            if (res.ok) {
+                toast('Alert re-queued');
+                if (fromModal) this.detail = null;
+                await this.load();
+            } else toast(res.data?.error || 'Retry failed', 'error');
+        },
+        async deleteAlert(a, fromModal = false) {
+            if (!confirm('Permanently delete this alert from history? This cannot be undone.')) return;
+            this.actionId = a.id;
+            const res = await api.delete('/alerts/' + a.id);
+            this.actionId = null;
+            if (res.ok) {
+                toast('Alert deleted');
+                if (fromModal) this.detail = null;
+                await this.load();
+            } else toast(res.data?.error || 'Delete failed', 'error');
         }
     };
 }

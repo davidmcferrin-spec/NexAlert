@@ -22,7 +22,7 @@ class JobQueueService
         $db = Database::getInstance();
         $db->execute(
             'INSERT INTO jobs (queue, payload, status, available_at)
-             VALUES (?, ?, \'pending\', NOW())',
+             VALUES (?, ?, \'pending\', UTC_TIMESTAMP())',
             [
                 $queue,
                 json_encode(['type' => $type, 'data' => $payload], JSON_THROW_ON_ERROR),

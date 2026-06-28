@@ -12,7 +12,7 @@
  * GET  /api/v1/profile/notifications → notification prefs
  * PUT  /api/v1/profile/notifications → update prefs
  * GET  /api/v1/profile/alerts       → alerts sent to me
- * POST /api/v1/profile/alerts/{id}/ack → ack from profile
+ * POST /api/v1/profile/change-password → change password while logged in
  */
 
 declare(strict_types=1);
@@ -327,6 +327,50 @@ class ProfileController
         );
 
         Response::success(['alerts' => $alerts, 'total' => $total, 'limit' => $limit, 'offset' => $offset]);
+    }
+
+    public static function changePassword(Request $request): never
+    {
+        $missing = $request->validate(['current_password', 'password', 'password_confirm']);
+        if ($missing) {
+            Response::validationError(array_fill_keys($missing, 'Required'));
+        }
+
+        $current = (string) $request->input('current_password');
+        $password = (string) $request->input('password');
+        $confirm  = (string) $request->input('password_confirm');
+
+        if ($password !== $confirm) {
+            Response::validationError(['password_confirm' => 'Passwords do not match']);
+        }
+
+        if (strlen($password) < 12) {
+            Response::validationError(['password' => 'Password must be at least 12 characters']);
+        }
+
+        $db     = Database::getInstance();
+        $userId = (int) $request->user['uid'];
+
+        $hash = $db->fetchValue(
+            'SELECT local_password_hash FROM users WHERE id = ? AND is_active = 1',
+            [$userId]
+        );
+
+        if (!$hash || !password_verify($current, (string) $hash)) {
+            Response::error('Current password is incorrect', 400);
+        }
+
+        $cost    = Env::int('BCRYPT_COST', 12);
+        $newHash = password_hash($password, PASSWORD_BCRYPT, ['cost' => $cost]);
+
+        $db->execute(
+            'UPDATE users SET local_password_hash = ? WHERE id = ?',
+            [$newHash, $userId]
+        );
+
+        AuditService::log('profile.password_changed', 'user', (string) $userId, [], $userId);
+
+        Response::success(null, 'Password updated');
     }
 
     public static function verifyEmailToken(Request $request): never

@@ -16,7 +16,7 @@ use NexAlert\Controllers\TokenController;
 use NexAlert\Controllers\AuditController;
 use NexAlert\Controllers\TagController;
 use NexAlert\Controllers\TargetController;
-use NexAlert\Controllers\AlertController;
+use NexAlert\Controllers\RoleController;
 use NexAlert\Controllers\ProfileController;
 use NexAlert\Controllers\WebhookController;
 use NexAlert\Middleware\AuthMiddleware;
@@ -64,6 +64,11 @@ return function (Router $router): void {
     });
 
     // -----------------------------------------------------------------------
+    // Roles
+    // -----------------------------------------------------------------------
+    $router->get('/api/v1/roles', [RoleController::class, 'list'], [AuthMiddleware::required()]);
+
+    // -----------------------------------------------------------------------
     // Users
     // -----------------------------------------------------------------------
     $router->group('/api/v1/users', function (Router $r): void {
@@ -83,6 +88,11 @@ return function (Router $router): void {
         $r->get('/{id:\d+}/tags',           [UserController::class, 'listTags'],  [AuthMiddleware::required()]);
         $r->post('/{id:\d+}/tags',          [UserController::class, 'assignTag'], [AuthMiddleware::withPermission('tag.manage')]);
         $r->delete('/{id:\d+}/tags/{tag_id:\d+}', [UserController::class, 'removeTag'], [AuthMiddleware::withPermission('tag.manage')]);
+
+        // Roles
+        $r->get('/{id:\d+}/roles',              [UserController::class, 'listRoles'],  [AuthMiddleware::required()]);
+        $r->post('/{id:\d+}/roles',             [UserController::class, 'assignRole'], [AuthMiddleware::withPermission('user.manage_roles')]);
+        $r->delete('/{id:\d+}/roles/{rid:\d+}', [UserController::class, 'removeRole'], [AuthMiddleware::withPermission('user.manage_roles')]);
     });
 
     // -----------------------------------------------------------------------
@@ -139,7 +149,10 @@ return function (Router $router): void {
         $r->post('/',              [AlertController::class, 'create'], [AuthMiddleware::withPermission('alert.send')]);
         $r->get('/',               [AlertController::class, 'list'],  [AuthMiddleware::required()]);
         $r->get('/{id:\d+}',      [AlertController::class, 'get'],   [AuthMiddleware::required()]);
-        $r->post('/{id:\d+}/ack',  [AlertController::class, 'ack'],   [AuthMiddleware::required()]);
+        $r->post('/{id:\d+}/ack',     [AlertController::class, 'ack'],    [AuthMiddleware::required()]);
+        $r->post('/{id:\d+}/cancel',  [AlertController::class, 'cancel'], [AuthMiddleware::withPermission('alert.send')]);
+        $r->post('/{id:\d+}/retry',   [AlertController::class, 'retry'],  [AuthMiddleware::withPermission('alert.send')]);
+        $r->delete('/{id:\d+}',       [AlertController::class, 'delete'], [AuthMiddleware::required()]);
     });
 
     // -----------------------------------------------------------------------
@@ -158,6 +171,7 @@ return function (Router $router): void {
         $r->get('/notifications',       [ProfileController::class, 'getNotificationPrefs'], [AuthMiddleware::required()]);
         $r->put('/notifications',       [ProfileController::class, 'updateNotificationPrefs'], [AuthMiddleware::required()]);
         $r->get('/alerts',              [ProfileController::class, 'myAlerts'],             [AuthMiddleware::required()]);
+        $r->post('/change-password',    [ProfileController::class, 'changePassword'],       [AuthMiddleware::required()]);
     });
 
     // -----------------------------------------------------------------------

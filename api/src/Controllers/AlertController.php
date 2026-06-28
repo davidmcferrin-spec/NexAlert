@@ -7,6 +7,9 @@
  * GET    /api/v1/alerts              → list alerts
  * GET    /api/v1/alerts/{id}         → alert detail + delivery stats
  * POST   /api/v1/alerts/{id}/ack     → acknowledge alert
+ * POST   /api/v1/alerts/{id}/cancel  → cancel in-flight alert
+ * POST   /api/v1/alerts/{id}/retry   → re-queue failed deliveries
+ * DELETE /api/v1/alerts/{id}         → delete alert from history
  */
 
 declare(strict_types=1);
@@ -18,6 +21,7 @@ use NexAlert\Api\Response;
 use NexAlert\Config\Database;
 use NexAlert\Services\AlertService;
 use NexAlert\Services\AuditService;
+use NexAlert\Services\PermissionService;
 
 class AlertController
 {
@@ -30,8 +34,8 @@ class AlertController
     public static function list(Request $request): never
     {
         $db           = Database::getInstance();
-        $isSuperAdmin = in_array('super_admin', $request->user['roles'] ?? [], true);
-        $canViewAll   = $isSuperAdmin || in_array('alert.view_all', $request->user['permissions'] ?? [], true);
+        $isSuperAdmin = PermissionService::isSuperAdmin($request->user);
+        $canViewAll   = $isSuperAdmin || PermissionService::hasPermission($db, $request->user, 'alert.view_all');
 
         $search   = trim((string) $request->query('search', ''));
         $status   = trim((string) $request->query('status', ''));
@@ -168,7 +172,7 @@ class AlertController
             [$alertId, $userId]
         ) > 0;
 
-        if (!$isRecipient && !in_array('super_admin', $request->user['roles'] ?? [], true)) {
+        if (!$isRecipient && !PermissionService::isSuperAdmin($request->user)) {
             Response::forbidden('You are not a recipient of this alert');
         }
 
@@ -191,13 +195,108 @@ class AlertController
         Response::success(null, 'Acknowledgement recorded');
     }
 
-    private static function assertAlertAccess(Request $request, int $alertId, Database $db): void
+    public static function cancel(Request $request): never
     {
-        if (in_array('super_admin', $request->user['roles'] ?? [], true)) {
+        $alertId = (int) $request->param('id');
+        $db      = Database::getInstance();
+
+        self::assertAlertSendAccess($request, $alertId, $db);
+
+        AlertService::cancel($alertId);
+
+        AuditService::log('alert.cancelled', 'alert', (string) $alertId, [], (int) $request->user['uid']);
+
+        Response::success(null, 'Alert cancelled');
+    }
+
+    public static function retry(Request $request): never
+    {
+        $alertId = (int) $request->param('id');
+        $db      = Database::getInstance();
+
+        self::assertAlertSendAccess($request, $alertId, $db);
+
+        AlertService::retry($alertId);
+
+        AuditService::log('alert.retried', 'alert', (string) $alertId, [], (int) $request->user['uid']);
+
+        Response::success(null, 'Alert re-queued for delivery');
+    }
+
+    public static function delete(Request $request): never
+    {
+        $alertId = (int) $request->param('id');
+        $db      = Database::getInstance();
+
+        self::assertAlertDeleteAccess($request, $alertId, $db);
+
+        AlertService::delete($alertId);
+
+        AuditService::log('alert.deleted', 'alert', (string) $alertId, [], (int) $request->user['uid']);
+
+        Response::success(null, 'Alert deleted');
+    }
+
+    private static function assertAlertSendAccess(Request $request, int $alertId, Database $db): void
+    {
+        if (!PermissionService::hasPermission($db, $request->user, 'alert.send')) {
+            Response::forbidden('alert.send permission required');
+        }
+
+        self::assertAlertOrgAccess($request, $alertId, $db);
+    }
+
+    private static function assertAlertDeleteAccess(Request $request, int $alertId, Database $db): void
+    {
+        $isSuperAdmin = PermissionService::isSuperAdmin($request->user);
+        $canManage    = PermissionService::hasPermission($db, $request->user, 'alert.manage');
+
+        $alert = $db->fetchOne('SELECT org_id, severity FROM alerts WHERE id = ?', [$alertId]);
+        if (!$alert) {
+            Response::notFound('Alert not found');
+        }
+
+        $isTest = $alert['severity'] === 'test';
+        $canSend = PermissionService::hasPermission($db, $request->user, 'alert.send');
+
+        if (!$isSuperAdmin && !$canManage && !($isTest && $canSend)) {
+            Response::forbidden('Insufficient permission to delete alerts');
+        }
+
+        if (!$isSuperAdmin && !PermissionService::hasPermission($db, $request->user, 'alert.view_all')) {
+            if ((int) $request->user['org'] !== (int) $alert['org_id']) {
+                Response::forbidden('Access denied');
+            }
+        }
+    }
+
+    private static function assertAlertOrgAccess(Request $request, int $alertId, Database $db): void
+    {
+        if (PermissionService::isSuperAdmin($request->user)) {
             return;
         }
 
-        if (in_array('alert.view_all', $request->user['permissions'] ?? [], true)) {
+        if (PermissionService::hasPermission($db, $request->user, 'alert.view_all')) {
+            return;
+        }
+
+        $orgId = (int) $db->fetchValue('SELECT org_id FROM alerts WHERE id = ?', [$alertId]);
+        if ($orgId === 0) {
+            Response::notFound('Alert not found');
+        }
+
+        if ((int) $request->user['org'] !== $orgId) {
+            Response::forbidden('Access denied');
+        }
+    }
+
+    private static function assertAlertAccess(Request $request, int $alertId, Database $db): void
+    {
+        if (PermissionService::isSuperAdmin($request->user)) {
+            return;
+        }
+
+        if (PermissionService::hasPermission($db, $request->user, 'alert.view_all')) {
             return;
         }
 

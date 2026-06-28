@@ -25,6 +25,8 @@ function api_call(string $method, string $url, string $token, ?array $body = nul
 // Fetch orgs for dropdown
 $orgsRes = api_call('GET', "{$apiBase}/api/v1/orgs?limit=200", $token);
 $orgs    = $orgsRes['data']['orgs'] ?? [];
+$sessionRoles = $_SESSION['user']['roles'] ?? [];
+$canManageRoles = in_array('super_admin', $sessionRoles, true) || in_array('org_admin', $sessionRoles, true);
 
 if ($isEdit) {
     $res  = api_call('GET', "{$apiBase}/api/v1/users/{$userId}", $token);
@@ -233,6 +235,131 @@ if ($isEdit) {
         </div>
     </div>
 
+    <!-- Roles panel -->
+    <div class="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 overflow-hidden mb-6"
+         x-data="rolesPanel(<?= $userId ?>, <?= $canManageRoles ? 'true' : 'false' ?>, <?= (int)($user['home_org_id'] ?? 0) ?>)"
+         x-init="load()">
+        <div class="flex items-center justify-between px-5 py-4 border-b border-gray-100 dark:border-gray-800">
+            <div>
+                <h3 class="text-sm font-semibold text-gray-900 dark:text-white">Roles &amp; Permissions</h3>
+                <p class="text-xs text-gray-400 mt-0.5">Assign scoped roles such as Alert Sender by org, tree, group, or tag.</p>
+            </div>
+            <?php if ($canManageRoles): ?>
+            <button @click="showAdd = !showAdd"
+                    class="text-xs font-semibold text-red-600 hover:text-red-700 dark:text-red-400">
+                <span x-text="showAdd ? 'Cancel' : '+ Assign Role'"></span>
+            </button>
+            <?php endif; ?>
+        </div>
+
+        <?php if ($canManageRoles): ?>
+        <div x-show="showAdd" x-cloak class="px-5 py-4 border-b border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/40 space-y-3">
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                    <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Role</label>
+                    <select x-model="newRole.role_id"
+                            class="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-gray-700
+                                   bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-red-500">
+                        <option value="">Select role…</option>
+                        <template x-for="r in assignableRoles" :key="r.id">
+                            <option :value="r.id" x-text="r.display_name + (r.name === 'sender' ? ' (can send alerts)' : '')"></option>
+                        </template>
+                    </select>
+                </div>
+                <div>
+                    <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Scope</label>
+                    <select x-model="newRole.scope_type" @change="onScopeTypeChange()"
+                            class="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-gray-700
+                                   bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-red-500">
+                        <option value="org">Organization</option>
+                        <option value="node">Org tree node</option>
+                        <option value="group">Group</option>
+                        <option value="tag">Tag</option>
+                        <template x-if="isSuperAdmin">
+                            <option value="global">Global (all orgs)</option>
+                        </template>
+                    </select>
+                </div>
+            </div>
+
+            <div x-show="newRole.scope_type === 'org' || newRole.scope_type === 'node'" class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                    <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Organization</label>
+                    <select x-model="newRole.org_id" @change="loadScopeNodes()"
+                            class="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-gray-700
+                                   bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-red-500">
+                        <option value="">Select org…</option>
+                        <template x-for="o in orgs" :key="o.id">
+                            <option :value="o.id" x-text="o.name"></option>
+                        </template>
+                    </select>
+                </div>
+                <div x-show="newRole.scope_type === 'node'">
+                    <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Tree node</label>
+                    <select x-model="newRole.org_node_id"
+                            class="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-gray-700
+                                   bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-red-500">
+                        <option value="">Select node…</option>
+                        <template x-for="node in scopeNodes" :key="node.id">
+                            <option :value="node.id"
+                                    x-text="'　'.repeat(node.depth) + node.name + ' (' + node.node_type + ')'"></option>
+                        </template>
+                    </select>
+                </div>
+            </div>
+
+            <div x-show="newRole.scope_type === 'group'">
+                <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Group</label>
+                <select x-model="newRole.group_id"
+                        class="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-gray-700
+                               bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-red-500">
+                    <option value="">Select group…</option>
+                    <template x-for="g in groups" :key="g.id">
+                        <option :value="g.id" x-text="g.name"></option>
+                    </template>
+                </select>
+            </div>
+
+            <div x-show="newRole.scope_type === 'tag'">
+                <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Tag</label>
+                <select x-model="newRole.tag_id"
+                        class="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-gray-700
+                               bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-red-500">
+                    <option value="">Select tag…</option>
+                    <template x-for="t in tags" :key="t.id">
+                        <option :value="t.id" x-text="t.name"></option>
+                    </template>
+                </select>
+            </div>
+
+            <button @click="assignRole()" :disabled="!canSubmitRole()"
+                    class="px-4 py-2 text-sm font-semibold bg-red-600 hover:bg-red-700 disabled:opacity-50
+                           text-white rounded-lg transition-colors">
+                Assign Role
+            </button>
+        </div>
+        <?php endif; ?>
+
+        <div class="divide-y divide-gray-100 dark:divide-gray-800">
+            <template x-for="r in roles" :key="r.user_role_id">
+                <div class="flex items-center justify-between px-5 py-3 gap-4">
+                    <div class="min-w-0">
+                        <div class="text-sm font-medium text-gray-900 dark:text-white" x-text="r.display_name"></div>
+                        <div class="text-xs text-gray-400 mt-0.5">
+                            <span x-text="r.scope_label"></span>
+                            <span x-show="r.name === 'sender'" class="ml-2 text-amber-600 dark:text-amber-400">· can send alerts</span>
+                        </div>
+                    </div>
+                    <?php if ($canManageRoles): ?>
+                    <button @click="removeRole(r)"
+                            class="text-xs text-red-400 hover:text-red-600 transition-colors flex-shrink-0">Remove</button>
+                    <?php endif; ?>
+                </div>
+            </template>
+            <div x-show="roles.length === 0" class="px-5 py-4 text-sm text-gray-400">No roles assigned.</div>
+        </div>
+    </div>
+
     <!-- Tags panel -->
     <div class="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 overflow-hidden"
          x-data="tagsPanel(<?= $userId ?>)" x-init="load()">
@@ -373,6 +500,110 @@ function membershipsPanel(userId) {
             if (!confirm(`Remove membership at ${this.membershipLabel(m)}?`)) return;
             const res = await api.delete(`/users/${userId}/memberships/${m.id}`);
             if (res.ok) { toast('Membership removed'); await this.load(); }
+            else toast(res.data.error || 'Failed', 'error');
+        }
+    };
+}
+
+function rolesPanel(userId, canManage, defaultOrgId) {
+    return {
+        roles: [],
+        assignableRoles: [],
+        orgs: [],
+        scopeNodes: [],
+        groups: [],
+        tags: [],
+        showAdd: false,
+        isSuperAdmin: <?= in_array('super_admin', $sessionRoles, true) ? 'true' : 'false' ?>,
+        canManage,
+        newRole: { role_id: '', scope_type: 'org', org_id: '', org_node_id: '', group_id: '', tag_id: '' },
+
+        async load() {
+            const res = await api.get(`/users/${userId}/roles`);
+            if (res.ok) this.roles = res.data.data.roles;
+            if (!this.canManage) return;
+
+            const rolesRes = await api.get('/roles');
+            if (rolesRes.ok) {
+                this.assignableRoles = rolesRes.data.data.roles.filter(r => r.name !== 'recipient');
+            }
+
+            const orgsRes = await api.get('/orgs?limit=200');
+            if (orgsRes.ok) {
+                this.orgs = orgsRes.data.data.orgs;
+                if (!this.newRole.org_id && defaultOrgId) {
+                    this.newRole.org_id = String(defaultOrgId);
+                    await this.loadScopeNodes();
+                }
+            }
+
+            const groupsRes = await api.get('/groups?limit=200');
+            if (groupsRes.ok) this.groups = groupsRes.data.data.groups || [];
+
+            const tagsRes = await api.get('/tags?limit=200');
+            if (tagsRes.ok) this.tags = tagsRes.data.data.tags || [];
+        },
+
+        onScopeTypeChange() {
+            this.newRole.org_node_id = '';
+            this.newRole.group_id = '';
+            this.newRole.tag_id = '';
+            if (this.newRole.scope_type === 'node') {
+                this.loadScopeNodes();
+            }
+        },
+
+        async loadScopeNodes() {
+            this.newRole.org_node_id = '';
+            this.scopeNodes = [];
+            if (!this.newRole.org_id) return;
+            const res = await api.get(`/orgs/${this.newRole.org_id}/nodes`);
+            if (res.ok) this.scopeNodes = res.data.data.nodes;
+        },
+
+        canSubmitRole() {
+            if (!this.newRole.role_id) return false;
+            if (this.newRole.scope_type === 'global') return true;
+            if (this.newRole.scope_type === 'org') return !!this.newRole.org_id;
+            if (this.newRole.scope_type === 'node') return !!this.newRole.org_id && !!this.newRole.org_node_id;
+            if (this.newRole.scope_type === 'group') return !!this.newRole.group_id;
+            if (this.newRole.scope_type === 'tag') return !!this.newRole.tag_id;
+            return false;
+        },
+
+        async assignRole() {
+            const body = {
+                role_id: parseInt(this.newRole.role_id, 10),
+                scope_type: this.newRole.scope_type,
+            };
+            if (this.newRole.scope_type === 'org' || this.newRole.scope_type === 'node') {
+                body.org_id = parseInt(this.newRole.org_id, 10);
+            }
+            if (this.newRole.scope_type === 'node') {
+                body.org_node_id = parseInt(this.newRole.org_node_id, 10);
+            }
+            if (this.newRole.scope_type === 'group') {
+                body.group_id = parseInt(this.newRole.group_id, 10);
+            }
+            if (this.newRole.scope_type === 'tag') {
+                body.tag_id = parseInt(this.newRole.tag_id, 10);
+            }
+
+            const res = await api.post(`/users/${userId}/roles`, body);
+            if (res.ok) {
+                toast('Role assigned');
+                this.showAdd = false;
+                this.newRole = { role_id: '', scope_type: 'org', org_id: String(defaultOrgId || ''), org_node_id: '', group_id: '', tag_id: '' };
+                await this.load();
+            } else {
+                toast(res.data.error || Object.values(res.data.errors || {}).join(' ') || 'Failed', 'error');
+            }
+        },
+
+        async removeRole(r) {
+            if (!confirm(`Remove ${r.display_name} (${r.scope_label})?`)) return;
+            const res = await api.delete(`/users/${userId}/roles/${r.user_role_id}`);
+            if (res.ok) { toast('Role removed'); await this.load(); }
             else toast(res.data.error || 'Failed', 'error');
         }
     };
