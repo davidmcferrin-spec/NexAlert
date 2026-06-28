@@ -1,0 +1,33 @@
+# NexAlert - Root .htaccess
+# Dreamhost managed vhost: document root is the repo root.
+# All requests are funneled through public/index.php (API) or public/app.php (web).
+# SSL is enforced via Dreamhost panel - this handles the rewrite.
+
+Options -Indexes
+Options -MultiViews
+
+# Force HTTPS (Dreamhost terminates SSL at their load balancer)
+RewriteEngine On
+RewriteCond %{HTTPS} off
+RewriteCond %{HTTP:X-Forwarded-Proto} !https
+RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
+
+# Block direct access to sensitive directories
+RewriteRule ^(api/|workers/|config/|db/|tests/) - [F,L]
+
+# Route /api/* to public/index.php (REST API)
+RewriteRule ^api/(.*)$ public/index.php [L,QSA]
+
+# Route everything else to public/app.php (web frontend)
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^(.*)$ public/app.php [L,QSA]
+
+# Security headers
+<IfModule mod_headers.c>
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set X-Frame-Options "SAMEORIGIN"
+    Header always set X-XSS-Protection "1; mode=block"
+    Header always set Referrer-Policy "strict-origin-when-cross-origin"
+    Header always set Permissions-Policy "geolocation=(), microphone=(), camera=()"
+</IfModule>

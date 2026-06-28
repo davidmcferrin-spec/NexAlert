@@ -1,0 +1,37 @@
+# NexAlert .gitignore
+
+# Environment - never commit
+.env
+.env.local
+.env.production
+
+# PHP dependencies (if Composer used later)
+vendor/
+
+# Logs
+logs/
+*.log
+
+# OS junk
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Python workers
+workers/__pycache__/
+workers/*.pyc
+workers/venv/
+workers/.venv/
+
+# Test artifacts
+tests/coverage/
+.phpunit.result.cache
+
+# Build artifacts
+public/assets/dist/
