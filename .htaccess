@@ -1,36 +1,30 @@
 # NexAlert - Root .htaccess
-# Dreamhost managed hosting: webroot = repo root
-# Source dirs are blocked; entry points are index.php and app.php
-
 Options -Indexes
 Options -MultiViews
 
-# Force HTTPS (Dreamhost terminates SSL, passes X-Forwarded-Proto)
 RewriteEngine On
+
+# Force HTTPS
 RewriteCond %{HTTPS} off
 RewriteCond %{HTTP:X-Forwarded-Proto} !https
 RewriteRule ^ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
 
-# Block direct access to source/config directories
-RewriteRule ^(api/|workers/|config/|db/|tests/|docs/) - [F,L]
-
-# Block dotfiles except .well-known (Let's Encrypt)
+# Block dotfiles except .well-known
 RewriteRule ^\.(?!well-known) - [F,L]
 
-# Route /api/* to index.php (REST API)
+# Block direct access to source directories (but NOT api/ - that's routed below)
+RewriteRule ^(workers/|config/|db/|tests/|docs/) - [F,L]
+
+# Route /api/* to index.php
 RewriteRule ^api/(.*)$ index.php [L,QSA]
 
-# Route everything else to app.php (web frontend)
-# Static files (css, js, images) are served directly
+# Route everything else to app.php (skip real files/dirs)
 RewriteCond %{REQUEST_FILENAME} !-f
 RewriteCond %{REQUEST_FILENAME} !-d
 RewriteRule ^(.*)$ app.php [L,QSA]
 
-# Security headers
 <IfModule mod_headers.c>
     Header always set X-Content-Type-Options "nosniff"
     Header always set X-Frame-Options "SAMEORIGIN"
-    Header always set X-XSS-Protection "1; mode=block"
     Header always set Referrer-Policy "strict-origin-when-cross-origin"
-    Header always set Permissions-Policy "geolocation=(), microphone=(), camera=()"
 </IfModule>
