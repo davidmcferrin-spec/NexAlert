@@ -113,7 +113,9 @@ function runMigrations(Database $db): void
 
     $pending = array_filter(
         $files,
-        fn (array $m): bool => !isset($applied[$m['version']])
+        static function (array $m) use ($applied): bool {
+            return !isset($applied[$m['version']]);
+        }
     );
 
     if ($pending === []) {
@@ -355,7 +357,12 @@ function showStatus(Database $db): void
         out(sprintf('  [%s] %s — %s', $state, $migration['version'], $migration['description']));
     }
 
-    $pending = count(array_filter($files, fn ($m) => !isset($applied[$m['version'])));
+    $pending = count(array_filter(
+        $files,
+        static function (array $m) use ($applied): bool {
+            return !isset($applied[$m['version']]);
+        }
+    ));
     out('');
     out($pending . ' pending, ' . (count($files) - $pending) . ' applied.');
 }
