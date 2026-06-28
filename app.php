@@ -22,6 +22,7 @@ Logger::init();
 session_start();
 
 require_once NEXALERT_ROOT . '/web/helpers/ui.php';
+require_once NEXALERT_ROOT . '/web/helpers/auth.php';
 
 $uri    = strtok($_SERVER['REQUEST_URI'] ?? '/', '?');
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
@@ -29,19 +30,7 @@ $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 // -----------------------------------------------------------------------
 // Helpers available to all page templates
 // -----------------------------------------------------------------------
-function web_auth(): bool
-{
-    return !empty($_SESSION['user']) && !empty($_SESSION['access_token']);
-}
-
-function require_auth(): void
-{
-    if (!web_auth()) {
-        $_SESSION['redirect_after_login'] = $_SERVER['REQUEST_URI'] ?? '/admin';
-        header('Location: /admin/login');
-        exit;
-    }
-}
+// Auth: web_auth(), require_auth(), web_clear_auth_session() — web/helpers/auth.php
 
 function flash(string $message, string $type = 'success'): void
 {
@@ -159,7 +148,7 @@ $routes = [
 // -----------------------------------------------------------------------
 $page = $routes[$method][$uri] ?? $routes[$method][rtrim($uri, '/')] ?? null;
 
-$publicPages = ['auth/login', 'auth/login_post', 'auth/forgot_password', 'auth/reset_password', 'profile/verify_email', 'poll/vote'];
+$publicPages = ['auth/login', 'auth/login_post', 'auth/logout', 'auth/forgot_password', 'auth/reset_password', 'profile/verify_email', 'poll/vote'];
 $profilePages = ['profile/index', 'profile/verify_email', 'poll/vote'];
 $normalizedUri = rtrim($uri, '/') ?: '/';
 
@@ -171,8 +160,9 @@ if (str_starts_with($normalizedUri, '/admin')) {
 }
 
 if ($page !== null && in_array($page, ['profile/index'], true) && !web_auth()) {
+    web_clear_auth_session();
     $_SESSION['redirect_after_login'] = $_SERVER['REQUEST_URI'] ?? '/profile';
-    header('Location: /admin/login');
+    header('Location: /admin/login?expired=1');
     exit;
 }
 

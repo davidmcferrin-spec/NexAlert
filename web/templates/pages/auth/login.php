@@ -8,6 +8,9 @@ if (web_auth()) {
 $pageTitle = 'Sign In';
 $error     = $_SESSION['login_error'] ?? null;
 unset($_SESSION['login_error']);
+if ($error === null && isset($_GET['expired'])) {
+    $error = 'Your session expired. Please sign in again.';
+}
 ?>
 
 <div class="sm:mx-auto sm:w-full sm:max-w-md">

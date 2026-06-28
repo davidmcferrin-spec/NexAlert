@@ -60,7 +60,11 @@ const api = {
         if (body) opts.body = JSON.stringify(body);
         const res = await fetch('/api/v1' + path, { ...opts, cache: 'no-store' });
         const data = await res.json();
-        if (res.status === 401) { window.location.href = '/admin/login?redirect=' + encodeURIComponent(location.pathname); throw new Error('auth'); }
+        if (res.status === 401) {
+            localStorage.removeItem('nexalert_token');
+            window.location.replace('/admin/logout?expired=1');
+            throw new Error('auth');
+        }
         return { ok: res.ok, status: res.status, data };
     },
     get: (p) => api.request('GET', p),

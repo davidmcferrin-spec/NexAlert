@@ -426,7 +426,8 @@ const api = {
         const data = await res.json();
 
         if (res.status === 401) {
-            window.location.href = '/admin/login';
+            localStorage.removeItem('nexalert_token');
+            window.location.replace('/admin/logout?expired=1');
             throw new Error('Unauthorized');
         }
 
