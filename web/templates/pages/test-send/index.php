@@ -8,7 +8,8 @@ $pageSubtitle = 'Build nested AND/OR targets, save presets, preview recipients, 
     <div class="rounded-xl border border-blue-200 dark:border-blue-900/50 bg-blue-50 dark:bg-blue-950/30 px-4 py-3 text-sm text-blue-800 dark:text-blue-200"
          <?= tip_attr('Target Builder resolves targets exactly like live alerts. Save presets for reuse in Send Alert or via API target_preset.', 'bottom') ?>>
         Build nested <strong>AND</strong> / <strong>OR</strong> groups with multiple tags, nodes, groups, and users.
-        Example: <code class="font-mono text-xs">org:nexstar AND (tag:eng OR tag:noc OR group:on-call@nexstar)</code>.
+        Exclude recipients with <strong>EXCEPT</strong> or <strong>AND NOT</strong>:
+        <code class="font-mono text-xs">(tag:eng AND org:nexstar) EXCEPT user:david</code>.
         Save as a <strong>preset</strong> for quick reuse in Send Alert or API calls with <code class="font-mono text-xs">target_preset</code>.
     </div>
 
@@ -153,11 +154,43 @@ $pageSubtitle = 'Build nested AND/OR targets, save presets, preview recipients, 
                     </template>
                 </div>
 
+                <!-- EXCEPT exclusions -->
+                <div class="rounded-xl border-2 border-slate-300 dark:border-slate-700 p-4 space-y-2 bg-slate-50/50 dark:bg-slate-950/20 mt-4">
+                    <div class="flex items-center justify-between gap-2 flex-wrap mb-2">
+                        <span class="text-xs font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400"
+                              <?= tip_attr('Users matching any EXCEPT term are removed from the final recipient set', 'top') ?>>EXCEPT — exclude</span>
+                        <span class="text-xs text-gray-400">Subtract from include set</span>
+                    </div>
+                    <div class="flex flex-wrap items-center gap-1.5 min-h-[1.5rem]">
+                        <template x-for="(term, ti) in exceptTree.children" :key="'ex'+ti">
+                            <span class="inline-flex items-center gap-1">
+                                <span x-show="ti > 0" class="text-[9px] font-bold text-slate-500 uppercase">or</span>
+                                <span class="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-mono
+                                             bg-slate-200 dark:bg-slate-800 text-slate-800 dark:text-slate-200">
+                                    <span x-text="term.dim + ':' + (term.label || term.value)"></span>
+                                    <button @click="removeExceptTerm(ti)"
+                                            class="text-gray-400 hover:text-red-500">&times;</button>
+                                </span>
+                            </span>
+                        </template>
+                        <span x-show="exceptTree.children.length === 0" class="text-xs text-gray-400 italic">No exclusions</span>
+                    </div>
+                    <div class="flex flex-wrap gap-1 pt-1 border-t border-slate-200 dark:border-slate-800">
+                        <template x-for="t in dimensionTypes" :key="'exbtn' + t">
+                            <button @click="openPicker('except', t)"
+                                    class="px-2 py-0.5 text-[10px] rounded border border-dashed border-slate-400
+                                           dark:border-slate-600 text-slate-500 hover:border-red-400 hover:text-red-600"
+                                    x-text="'+ ' + t"></button>
+                        </template>
+                    </div>
+                </div>
+
                 <p class="text-xs text-gray-400 mt-4">
                     <code class="font-mono">org</code> = home org ·
                     <code class="font-mono">node</code> = membership subtree ·
-                    <code class="font-mono">tag</code> / <code class="font-mono">group</code> / <code class="font-mono">user</code>
+                    <code class="font-mono">tag</code> / <code class="font-mono">group</code> /                     <code class="font-mono">user</code>
                     · Use OR subgroups for multiple tags/groups/users under one AND branch
+                    · <code class="font-mono">EXCEPT user:name</code> or <code class="font-mono">AND NOT user:name</code> at end of expression
                 </p>
             </div>
         </div>
@@ -170,7 +203,7 @@ $pageSubtitle = 'Build nested AND/OR targets, save presets, preview recipients, 
                 </div>
                 <div class="p-5 space-y-3">
                     <textarea x-model="expression" @input="clearActivePreset()" rows="4"
-                              placeholder="(org:nexstar AND (tag:engineering OR tag:noc)) OR group:on-call@nexstar"
+                              placeholder="(org:nexstar AND tag:engineering) EXCEPT user:david"
                               class="w-full px-3 py-2 text-sm font-mono rounded-xl border border-gray-200 dark:border-gray-700
                                      bg-white dark:bg-gray-800 text-gray-900 dark:text-white focus:ring-2 focus:ring-red-500"></textarea>
                     <div class="flex flex-wrap gap-2">
@@ -232,6 +265,9 @@ $pageSubtitle = 'Build nested AND/OR targets, save presets, preview recipients, 
                 <template x-for="rt in preview.counts?.row_totals ?? []" :key="rt.row">
                     <span x-text="'Row ' + rt.row + ': ' + rt.count"></span>
                 </template>
+                <span x-show="preview.counts?.excluded > 0">
+                    <strong x-text="preview.counts.excluded"></strong> excluded
+                </span>
             </div>
             <span x-show="loading" class="text-xs text-gray-400 ml-auto">Resolving…</span>
         </div>
@@ -361,6 +397,7 @@ $pageSubtitle = 'Build nested AND/OR targets, save presets, preview recipients, 
 function testSendPage() {
     return {
         targetTree: defaultTargetTree(),
+        exceptTree: defaultExceptTree(),
         expression: '',
         parseErrors: [],
         dimensionTypes: ['org', 'node', 'tag', 'group', 'user'],
@@ -382,7 +419,14 @@ function testSendPage() {
             const savedTree = sessionStorage.getItem('nexalert_target_tree');
             if (savedTree) {
                 try {
-                    this.targetTree = JSON.parse(savedTree);
+                    const parsed = JSON.parse(savedTree);
+                    if (parsed.type === 'target') {
+                        this.targetTree = cloneTree(parsed.include || defaultTargetTree());
+                        this.exceptTree = cloneTree(parsed.except || defaultExceptTree());
+                    } else {
+                        this.targetTree = parsed;
+                        this.exceptTree = defaultExceptTree();
+                    }
                     sessionStorage.removeItem('nexalert_target_tree');
                 } catch (e) { /* ignore */ }
             }
@@ -397,7 +441,7 @@ function testSendPage() {
 
         saveForComposer() {
             sessionStorage.setItem('nexalert_target_expression', this.expression);
-            sessionStorage.setItem('nexalert_target_tree', JSON.stringify(this.targetTree));
+            sessionStorage.setItem('nexalert_target_tree', JSON.stringify(buildTargetPayload(this.targetTree, this.exceptTree)));
             if (this.activePreset?.slug) {
                 sessionStorage.setItem('nexalert_target_preset', this.activePreset.slug);
             } else {
@@ -424,8 +468,12 @@ function testSendPage() {
             const p = res.data.data;
             this.activePresetId = p.id;
             this.activePreset = p;
-            if (p.target_tree && p.target_tree.type === 'group') {
+            if (p.target_tree && p.target_tree.type === 'target') {
+                this.targetTree = cloneTree(p.target_tree.include || defaultTargetTree());
+                this.exceptTree = cloneTree(p.target_tree.except || defaultExceptTree());
+            } else if (p.target_tree && p.target_tree.type === 'group') {
                 this.targetTree = cloneTree(p.target_tree);
+                this.exceptTree = defaultExceptTree();
             }
             this.expression = p.expression || '';
             if (!p.target_tree) {
@@ -464,7 +512,7 @@ function testSendPage() {
                 slug: this.presetModal.slug.trim(),
                 description: this.presetModal.description.trim(),
                 expression: this.expression,
-                target_tree: this.targetTree,
+                target_tree: buildTargetPayload(this.targetTree, this.exceptTree),
                 global: this.presetModal.global,
             };
             if (!body.name) {
@@ -497,7 +545,7 @@ function testSendPage() {
                 slug: this.activePreset.slug,
                 description: this.activePreset.description || '',
                 expression: this.expression,
-                target_tree: this.targetTree,
+                target_tree: buildTargetPayload(this.targetTree, this.exceptTree),
             });
             if (res.ok) {
                 this.activePreset = res.data.data;
@@ -529,6 +577,7 @@ function testSendPage() {
 
         resetTree() {
             this.targetTree = defaultTargetTree();
+            this.exceptTree = defaultExceptTree();
             this.clearActivePreset();
             this.syncFromBuilder();
         },
@@ -587,6 +636,13 @@ function testSendPage() {
                 n = n.children[i];
             }
             return n;
+        },
+
+        removeExceptTerm(idx) {
+            this.clearActivePreset();
+            this.exceptTree = cloneTree(this.exceptTree);
+            this.exceptTree.children.splice(idx, 1);
+            this.syncFromBuilder();
         },
 
         openPicker(path, type) {
@@ -653,6 +709,21 @@ function testSendPage() {
             this.clearActivePreset();
             const path = this.picker.path;
             const type = this.picker.type;
+
+            if (path === 'except') {
+                this.exceptTree = cloneTree(this.exceptTree);
+                this.exceptTree.children.push({
+                    type: 'term',
+                    dim: type,
+                    value: item._val,
+                    label: item._label,
+                });
+                this.picker.open = false;
+                this.syncFromBuilder();
+                this.runPreview();
+                return;
+            }
+
             this.targetTree = cloneTree(this.targetTree);
             const node = this.nodeAt(path);
             if (!node || node.type !== 'group') {
@@ -673,8 +744,14 @@ function testSendPage() {
 
         syncFromBuilder() {
             if (this.syncLock) return;
-            this.expression = treeToExpression(this.targetTree);
+            this.expression = treeToExpression(this.targetTree, this.exceptTree);
             this.parseErrors = [];
+        },
+
+        applyAstToBuilder(ast) {
+            const applied = astToBuilderTrees(ast);
+            this.targetTree = applied.targetTree;
+            this.exceptTree = applied.exceptTree;
         },
 
         async syncFromExpression() {
@@ -692,7 +769,7 @@ function testSendPage() {
                 return;
             }
             if (data.ast) {
-                this.targetTree = astToTree(data.ast);
+                this.applyAstToBuilder(data.ast);
             }
             this.syncLock = true;
             this.expression = data.expression || this.expression;
@@ -704,7 +781,10 @@ function testSendPage() {
             this.loading = true;
             this.parseErrors = [];
             this.syncFromBuilder();
-            const body = { target_tree: this.targetTree, expression: this.expression };
+            const body = {
+                target_tree: buildTargetPayload(this.targetTree, this.exceptTree),
+                expression: this.expression,
+            };
 
             const res = await api.post('/targets/preview', body);
             this.loading = false;
@@ -723,7 +803,7 @@ function testSendPage() {
                 this.syncLock = true;
                 this.expression = this.preview.expression || this.expression;
                 if (this.preview.ast) {
-                    this.targetTree = astToTree(this.preview.ast);
+                    this.applyAstToBuilder(this.preview.ast);
                 }
                 this.syncLock = false;
                 if (this.preview.rest_api?.body) {
@@ -755,18 +835,42 @@ function defaultAndBranch() {
     return { type: 'group', op: 'AND', children: [] };
 }
 
+function defaultExceptTree() {
+    return { type: 'group', op: 'OR', children: [] };
+}
+
+function buildTargetPayload(includeTree, exceptTree) {
+    if (!exceptTree?.children?.length) {
+        return includeTree;
+    }
+    return { type: 'target', include: includeTree, except: exceptTree };
+}
+
 function cloneTree(t) {
     return JSON.parse(JSON.stringify(t));
 }
 
-function treeToExpression(node) {
+function treeToExpression(includeTree, exceptTree) {
+    const include = treeNodeToExpression(includeTree);
+    if (!exceptTree?.children?.length) {
+        return include;
+    }
+    const exceptParts = exceptTree.children.map(t => treeNodeToExpression(t)).filter(Boolean);
+    if (exceptParts.length === 0) {
+        return include;
+    }
+    const except = exceptParts.length === 1 ? exceptParts[0] : '(' + exceptParts.join(' OR ') + ')';
+    return include + ' EXCEPT ' + except;
+}
+
+function treeNodeToExpression(node) {
     if (node.type === 'term') {
         return node.dim + ':' + node.value;
     }
     if (!node.children || node.children.length === 0) return '';
 
     const op = node.op || 'AND';
-    const parts = node.children.map(c => treeToExpression(c)).filter(Boolean);
+    const parts = node.children.map(c => treeNodeToExpression(c)).filter(Boolean);
     if (parts.length === 0) return '';
     if (parts.length === 1) return parts[0];
 
@@ -779,6 +883,33 @@ function treeToExpression(node) {
     }).join(join);
 
     return inner;
+}
+
+function astToBuilderTrees(ast) {
+    if (ast?.type === 'target') {
+        return {
+            targetTree: astToTree(ast.include),
+            exceptTree: exceptAstToTree(ast.except || []),
+        };
+    }
+
+    return {
+        targetTree: astToTree(ast),
+        exceptTree: defaultExceptTree(),
+    };
+}
+
+function exceptAstToTree(terms) {
+    return {
+        type: 'group',
+        op: 'OR',
+        children: (terms || []).map(t => ({
+            type: 'term',
+            dim: t.dim,
+            value: t.value,
+            label: t.label || t.value,
+        })),
+    };
 }
 
 function astToTree(ast) {

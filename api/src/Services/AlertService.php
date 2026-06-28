@@ -66,12 +66,13 @@ class AlertService
             Response::validationError(['targets' => implode('; ', $targetResult['errors'])]);
         }
 
-        $targetRows = $targetResult['targets'];
+        $targetRows   = $targetResult['targets'];
+        $excludeTerms = $targetResult['exclude_terms'];
         if ($targetRows === []) {
             Response::validationError(['targets' => 'At least one target is required']);
         }
 
-        $userIds = TagService::resolveTargets($db, $targetRows);
+        $userIds = TargetExpressionService::resolveRecipients($db, $targetRows, $excludeTerms);
         if ($userIds === []) {
             Response::validationError(['targets' => 'No active recipients match the target expression']);
         }
@@ -145,9 +146,12 @@ class AlertService
             $orgId, $createdByUser, $createdByToken, $alertType, $severity,
             $subject, $body, $bodyHtml, $channelsStr, $ttlMinutes,
             $ackRequired, $ackDeadline, $escalationUserId, $escalationGroupId, $pollQuestion, $pollOptionsJson,
-            $externalRef, $targetRows, $userIds, $channels, $sendAtParsed, $alertStatus
+            $externalRef, $targetRows, $excludeTerms, $userIds, $channels, $sendAtParsed, $alertStatus
         ): int {
             $sendAtDb = $sendAtParsed['utc'] ?? null;
+            $excludeJson = $excludeTerms !== []
+                ? json_encode($excludeTerms, JSON_THROW_ON_ERROR)
+                : null;
 
             $db->execute(
                 'INSERT INTO alerts (
@@ -156,15 +160,15 @@ class AlertService
                     send_at, ttl_minutes, expires_at,
                     ack_required, ack_deadline_minutes, escalation_user_id, escalation_group_id,
                     poll_question, poll_options,
-                    status, external_ref
-                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?)',
+                    status, external_ref, target_exclude_terms
+                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
                 [
                     $createdByUser, $createdByToken, $orgId,
                     $alertType, $severity, $subject, $body, $bodyHtml, $channelsStr,
                     $sendAtDb, $ttlMinutes ?: null,
                     $ackRequired ? 1 : 0, $ackDeadline, $escalationUserId, $escalationGroupId,
                     $pollQuestion, $pollOptionsJson,
-                    $alertStatus, $externalRef,
+                    $alertStatus, $externalRef, $excludeJson,
                 ]
             );
             $alertId = $db->lastInsertId();
@@ -271,7 +275,11 @@ class AlertService
     }
 
     /**
-     * @return array{targets: list<array<string, mixed>>, errors: string[]}
+     * @return array{
+     *   targets: list<array<string, mixed>>,
+     *   exclude_terms: list<array<string, mixed>>,
+     *   errors: string[]
+     * }
      */
     private static function resolveInputTargets(Database $db, Request $request): array
     {
@@ -279,62 +287,47 @@ class AlertService
         if ($presetSlug !== '') {
             $preset = TargetPresetService::resolveForAlert($db, $request, $presetSlug);
             $tree   = $preset['target_tree'];
-            if (is_array($tree) && ($tree['type'] ?? '') === 'group') {
+            if (is_array($tree) && in_array($tree['type'] ?? '', ['group', 'target'], true)) {
                 return self::compileTreeToTargets($db, $tree);
             }
 
             $expression = trim($preset['expression']);
             if ($expression === '') {
-                return ['targets' => [], 'errors' => ['target_preset has no expression']];
+                return ['targets' => [], 'exclude_terms' => [], 'errors' => ['target_preset has no expression']];
             }
-            $compiled = TargetExpressionService::compileExpressionAst($expression);
-            if ($compiled['errors'] !== []) {
-                return ['targets' => [], 'errors' => $compiled['errors']];
-            }
-            $dnf = \NexAlert\Services\TargetAstService::astToDnf($compiled['ast']);
-            if ($dnf['errors'] !== []) {
-                return ['targets' => [], 'errors' => $dnf['errors']];
-            }
-            $converted = TargetExpressionService::dnfToAlertTargets($db, $dnf['conjunctions']);
 
-            return ['targets' => $converted['targets'], 'errors' => $converted['errors']];
+            return self::compileExpressionToTargets($db, $expression);
         }
 
         $tree = $request->input('target_tree');
-        if (is_array($tree) && ($tree['type'] ?? '') === 'group') {
+        if (is_array($tree) && in_array($tree['type'] ?? '', ['group', 'target'], true)) {
             return self::compileTreeToTargets($db, $tree);
         }
 
         $structured = $request->input('targets_structured');
         if (is_array($structured) && $structured !== []) {
-            if (($structured['type'] ?? '') === 'group') {
+            if (in_array($structured['type'] ?? '', ['group', 'target'], true)) {
                 return self::compileTreeToTargets($db, $structured);
             }
 
             $rows      = TargetExpressionService::structuredToFlatRows($structured);
-            $ast       = \NexAlert\Services\TargetAstService::flatRowsToAst($rows);
-            $dnf       = \NexAlert\Services\TargetAstService::astToDnf($ast);
+            $ast       = TargetAstService::flatRowsToAst($rows);
+            $dnf       = TargetAstService::astToDnf($ast);
             if ($dnf['errors'] !== []) {
-                return ['targets' => [], 'errors' => $dnf['errors']];
+                return ['targets' => [], 'exclude_terms' => [], 'errors' => $dnf['errors']];
             }
             $converted = TargetExpressionService::dnfToAlertTargets($db, $dnf['conjunctions']);
 
-            return ['targets' => $converted['targets'], 'errors' => $converted['errors']];
+            return [
+                'targets'       => $converted['targets'],
+                'exclude_terms' => [],
+                'errors'        => $converted['errors'],
+            ];
         }
 
         $expression = trim((string) $request->input('targets', ''));
         if ($expression !== '') {
-            $compiled = TargetExpressionService::compileExpressionAst($expression);
-            if ($compiled['errors'] !== []) {
-                return ['targets' => [], 'errors' => $compiled['errors']];
-            }
-            $dnf = \NexAlert\Services\TargetAstService::astToDnf($compiled['ast']);
-            if ($dnf['errors'] !== []) {
-                return ['targets' => [], 'errors' => $dnf['errors']];
-            }
-            $converted = TargetExpressionService::dnfToAlertTargets($db, $dnf['conjunctions']);
-
-            return ['targets' => $converted['targets'], 'errors' => $converted['errors']];
+            return self::compileExpressionToTargets($db, $expression);
         }
 
         $rawTargets = $request->input('target_rows');
@@ -362,29 +355,45 @@ class AlertService
                 ];
             }
 
-            return ['targets' => $targets, 'errors' => $errors];
+            $excludeTerms = [];
+            $rawExclude   = $request->input('target_exclude_terms');
+            if (is_array($rawExclude)) {
+                $excludeTerms = $rawExclude;
+            }
+
+            return ['targets' => $targets, 'exclude_terms' => $excludeTerms, 'errors' => $errors];
         }
 
-        return ['targets' => [], 'errors' => ['targets expression or structured targets required']];
+        return ['targets' => [], 'exclude_terms' => [], 'errors' => ['targets expression or structured targets required']];
+    }
+
+    /**
+     * @return array{targets: list<array<string, mixed>>, exclude_terms: list<array<string, mixed>>, errors: string[]}
+     */
+    private static function compileExpressionToTargets(Database $db, string $expression): array
+    {
+        $compiled = TargetExpressionService::compileForAlert($db, $expression);
+
+        return [
+            'targets'       => $compiled['targets'],
+            'exclude_terms' => $compiled['exclude_terms'],
+            'errors'        => $compiled['errors'],
+        ];
     }
 
     /**
      * @param array<string, mixed> $tree
-     * @return array{targets: list<array<string, mixed>>, errors: string[]}
+     * @return array{targets: list<array<string, mixed>>, exclude_terms: list<array<string, mixed>>, errors: string[]}
      */
     private static function compileTreeToTargets(Database $db, array $tree): array
     {
-        $compiled = TargetExpressionService::compileExpressionAst('', $tree);
-        if ($compiled['errors'] !== []) {
-            return ['targets' => [], 'errors' => $compiled['errors']];
-        }
-        $dnf = \NexAlert\Services\TargetAstService::astToDnf($compiled['ast']);
-        if ($dnf['errors'] !== []) {
-            return ['targets' => [], 'errors' => $dnf['errors']];
-        }
-        $converted = TargetExpressionService::dnfToAlertTargets($db, $dnf['conjunctions']);
+        $compiled = TargetExpressionService::compileForAlert($db, '', $tree);
 
-        return ['targets' => $converted['targets'], 'errors' => $converted['errors']];
+        return [
+            'targets'       => $compiled['targets'],
+            'exclude_terms' => $compiled['exclude_terms'],
+            'errors'        => $compiled['errors'],
+        ];
     }
 
     /**

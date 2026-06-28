@@ -26,10 +26,10 @@ class TargetController
         $tree       = $request->input('target_tree');
         $rows       = null;
 
-        if (is_array($tree) && ($tree['type'] ?? '') === 'group') {
+        if (is_array($tree) && in_array($tree['type'] ?? '', ['group', 'target'], true)) {
             $result = TargetExpressionService::preview($db, null, null, $tree);
         } elseif (is_array($structured) && $structured !== []) {
-            if (($structured['type'] ?? '') === 'group') {
+            if (in_array($structured['type'] ?? '', ['group', 'target'], true)) {
                 $result = TargetExpressionService::preview($db, null, null, $structured);
             } else {
                 $rows   = TargetExpressionService::structuredToRows($structured);

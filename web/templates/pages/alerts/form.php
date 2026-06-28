@@ -252,7 +252,8 @@ function alertComposer() {
             if (savedTree) {
                 try {
                     this.targetTree = JSON.parse(savedTree);
-                    this.hasTargetTree = this.targetTree && this.targetTree.type === 'group';
+                    this.hasTargetTree = this.targetTree
+                        && (this.targetTree.type === 'group' || this.targetTree.type === 'target');
                     sessionStorage.removeItem('nexalert_target_tree');
                 } catch (e) {
                     this.targetTree = null;
@@ -305,7 +306,7 @@ function alertComposer() {
             this.form.targets = p.expression || '';
             this.targetPresetSlug = p.slug;
             this.targetsOverridden = false;
-            if (p.target_tree && p.target_tree.type === 'group') {
+            if (p.target_tree && (p.target_tree.type === 'group' || p.target_tree.type === 'target')) {
                 this.targetTree = p.target_tree;
                 this.hasTargetTree = true;
             } else {

@@ -4,12 +4,15 @@
  * Parses canonical targeting strings, resolves identifiers to alert_targets rows,
  * and previews recipient sets via TagService::resolveTargetRow().
  *
- * Expression grammar (nested AND/OR):
+ * Expression grammar (nested AND/OR + optional exclusions):
  *   org:nexstar AND (tag:eng OR tag:noc) OR group:noc@nexstar
+ *   (tag:eng AND org:nexstar) EXCEPT user:david
+ *   tag:eng AND org:nexstar AND NOT user:david
  *   tag:a,b,c  →  shorthand for tag:a OR tag:b OR tag:c
  *
  * Dimensions: org, node, tag, group, user
- * - Parsed to AST, normalized to DNF, stored as alert_targets rows (OR of AND clauses)
+ * - Include parsed to AST, normalized to DNF, stored as alert_targets rows (OR of AND clauses)
+ * - EXCEPT/NOT terms stored on alerts.target_exclude_terms and subtracted at resolution
  * - Compound AND (e.g. tag:a AND tag:b) uses conj_terms JSON column
  * - group:slug@org-slug disambiguates groups with the same slug in different orgs
  * - node:123 uses numeric id; node:slug when unique among active nodes
@@ -52,6 +55,7 @@ class TargetExpressionService
      *   legacy_rows: list<array<string, string>>,
      *   ast: ?array,
      *   expression: string,
+     *   except_terms: list<array<string, mixed>>,
      *   errors: string[]
      * }
      */
@@ -65,48 +69,177 @@ class TargetExpressionService
 
         if ($parsed['errors'] !== []) {
             return [
-                'legacy_rows' => [],
-                'ast'         => null,
-                'expression'  => trim($expression),
-                'errors'      => $parsed['errors'],
+                'legacy_rows'  => [],
+                'ast'          => null,
+                'expression'   => trim($expression),
+                'except_terms' => [],
+                'errors'       => $parsed['errors'],
             ];
         }
 
         $ast = $parsed['ast'];
         if ($ast === null) {
             return [
-                'legacy_rows' => [],
-                'ast'         => null,
-                'expression'  => '',
-                'errors'      => ['Expression is empty'],
+                'legacy_rows'  => [],
+                'ast'          => null,
+                'expression'   => '',
+                'except_terms' => [],
+                'errors'       => ['Expression is empty'],
             ];
         }
 
-        $dnf = TargetAstService::astToDnf($ast);
+        $exceptTerms = TargetAstService::getExceptTerms($ast);
+        $dnf         = TargetAstService::astToDnf($ast);
         if ($dnf['errors'] !== []) {
             return [
-                'legacy_rows' => [],
-                'ast'         => $ast,
-                'expression'  => TargetAstService::astToExpression($ast),
-                'errors'      => $dnf['errors'],
+                'legacy_rows'  => [],
+                'ast'          => $ast,
+                'expression'   => TargetAstService::astToExpression($ast),
+                'except_terms' => $exceptTerms,
+                'errors'       => $dnf['errors'],
             ];
         }
 
         if ($dnf['conjunctions'] === []) {
             return [
-                'legacy_rows' => [],
-                'ast'         => $ast,
-                'expression'  => '',
-                'errors'      => ['No valid targeting terms found'],
+                'legacy_rows'  => [],
+                'ast'          => $ast,
+                'expression'   => TargetAstService::astToExpression($ast),
+                'except_terms' => $exceptTerms,
+                'errors'       => ['No valid targeting terms found'],
             ];
         }
 
         return [
-            'legacy_rows' => self::dnfToLegacyRows($dnf['conjunctions']),
-            'ast'         => $ast,
-            'expression'  => TargetAstService::dnfToExpression($dnf['conjunctions']),
-            'errors'      => [],
+            'legacy_rows'  => self::dnfToLegacyRows($dnf['conjunctions']),
+            'ast'          => $ast,
+            'expression'   => TargetAstService::astToExpression($ast),
+            'except_terms' => $exceptTerms,
+            'errors'       => [],
         ];
+    }
+
+    /**
+     * Compile expression or builder tree into alert_targets rows and exclude terms.
+     *
+     * @return array{
+     *   targets: list<array<string, mixed>>,
+     *   exclude_terms: list<array<string, mixed>>,
+     *   expression: string,
+     *   errors: string[],
+     *   warnings: string[]
+     * }
+     */
+    public static function compileForAlert(Database $db, ?string $expression = null, ?array $tree = null): array
+    {
+        $compiled = self::compileExpressionAst((string) $expression, $tree);
+        if ($compiled['errors'] !== []) {
+            return [
+                'targets'       => [],
+                'exclude_terms' => [],
+                'expression'    => $compiled['expression'],
+                'errors'        => $compiled['errors'],
+                'warnings'      => [],
+            ];
+        }
+
+        $dnf = TargetAstService::astToDnf($compiled['ast']);
+        $converted = self::dnfToAlertTargets($db, $dnf['conjunctions']);
+        if ($converted['errors'] !== []) {
+            return [
+                'targets'       => [],
+                'exclude_terms' => [],
+                'expression'    => $compiled['expression'],
+                'errors'        => $converted['errors'],
+                'warnings'      => $converted['warnings'],
+            ];
+        }
+
+        $exceptErrors = [];
+        self::resolveExceptUserIds($db, $compiled['except_terms'], $exceptErrors);
+        if ($exceptErrors !== []) {
+            return [
+                'targets'       => [],
+                'exclude_terms' => [],
+                'expression'    => $compiled['expression'],
+                'errors'        => $exceptErrors,
+                'warnings'      => $converted['warnings'],
+            ];
+        }
+
+        return [
+            'targets'       => $converted['targets'],
+            'exclude_terms' => $compiled['except_terms'],
+            'expression'    => $compiled['expression'],
+            'errors'        => [],
+            'warnings'      => $converted['warnings'],
+        ];
+    }
+
+    /**
+     * Resolve EXCEPT terms to user IDs (union of all excluded users).
+     *
+     * @param list<array<string, mixed>> $terms
+     * @param list<string> $errors
+     * @return int[]
+     */
+    public static function resolveExceptUserIds(Database $db, array $terms, array &$errors = []): array
+    {
+        if ($terms === []) {
+            return [];
+        }
+
+        $userIds = [];
+        foreach ($terms as $i => $term) {
+            $dim   = strtolower((string) ($term['dim'] ?? ''));
+            $value = trim((string) ($term['value'] ?? ''));
+            if ($value === '' || !in_array($dim, self::DIM_ORDER, true)) {
+                $errors[] = 'EXCEPT term ' . ($i + 1) . ': invalid dimension';
+                continue;
+            }
+
+            $resolved = self::resolveRowDimensions($db, [$dim => $value], $i + 1);
+            $errors   = array_merge($errors, $resolved['errors']);
+            if ($resolved['target'] === null) {
+                continue;
+            }
+
+            $userIds = array_merge($userIds, TagService::resolveTargetRow($db, $resolved['target']));
+        }
+
+        return array_values(array_unique(array_map('intval', $userIds)));
+    }
+
+    /**
+     * Apply include targets minus exclude terms.
+     *
+     * @param list<array<string, mixed>> $targetRows
+     * @param list<array<string, mixed>> $exceptTerms
+     * @return int[]
+     */
+    public static function resolveRecipients(Database $db, array $targetRows, array $exceptTerms = []): array
+    {
+        $userIds = TagService::resolveTargets($db, $targetRows);
+        if ($exceptTerms === []) {
+            return $userIds;
+        }
+
+        $errors     = [];
+        $excludeIds = self::resolveExceptUserIds($db, $exceptTerms, $errors);
+        if ($errors !== []) {
+            return $userIds;
+        }
+
+        if ($excludeIds === []) {
+            return $userIds;
+        }
+
+        $excludeMap = array_fill_keys($excludeIds, true);
+
+        return array_values(array_filter(
+            $userIds,
+            static fn (int $uid): bool => !isset($excludeMap[$uid])
+        ));
     }
 
     /**
@@ -561,13 +694,29 @@ class TargetExpressionService
                 'warnings'   => $converted['warnings'],
                 'targets'    => [],
                 'users'      => [],
-                'counts'     => ['total_unique' => 0, 'sms_eligible' => 0, 'row_totals' => []],
+                'counts'     => ['total_unique' => 0, 'sms_eligible' => 0, 'row_totals' => [], 'excluded' => 0],
+            ];
+        }
+
+        $exceptTerms = TargetAstService::getExceptTerms($compiled['ast'] ?? []);
+        $exceptErrors = [];
+        $excludeIds   = self::resolveExceptUserIds($db, $exceptTerms, $exceptErrors);
+        if ($exceptErrors !== []) {
+            return [
+                'valid'      => false,
+                'expression' => $compiled['expression'] ?? '',
+                'errors'     => $exceptErrors,
+                'warnings'   => $converted['warnings'],
+                'targets'    => [],
+                'users'      => [],
+                'counts'     => ['total_unique' => 0, 'sms_eligible' => 0, 'row_totals' => [], 'excluded' => 0],
             ];
         }
 
         $targets    = $converted['targets'];
         $matchedMap = [];
         $rowTotals  = [];
+        $excludeMap = $excludeIds !== [] ? array_fill_keys($excludeIds, true) : [];
 
         foreach ($targets as $i => $target) {
             $rowUsers = TagService::resolveTargetRow($db, $target);
@@ -578,10 +727,21 @@ class TargetExpressionService
             ];
 
             foreach ($rowUsers as $uid) {
+                if (isset($excludeMap[$uid])) {
+                    continue;
+                }
                 if (!isset($matchedMap[$uid])) {
                     $matchedMap[$uid] = [];
                 }
                 $matchedMap[$uid][] = $target['target_label'] ?? ('Row ' . ($i + 1));
+            }
+        }
+
+        $includeIds = TagService::resolveTargets($db, $targets);
+        $excludedCount = 0;
+        foreach ($excludeIds as $uid) {
+            if (in_array($uid, $includeIds, true)) {
+                $excludedCount++;
             }
         }
 
@@ -615,7 +775,7 @@ class TargetExpressionService
         }
         unset($user);
 
-        $canonical = $converted['expression'];
+        $canonical = $compiled['expression'] ?? $converted['expression'];
 
         return [
             'valid'      => true,
@@ -624,10 +784,12 @@ class TargetExpressionService
             'warnings'   => $converted['warnings'],
             'targets'    => $targets,
             'users'      => $users,
+            'except_terms' => $exceptTerms,
             'counts'     => [
                 'total_unique' => count($users),
                 'sms_eligible' => $smsEligible,
                 'row_totals'   => $rowTotals,
+                'excluded'     => $excludedCount,
             ],
             'ast'        => $compiled['ast'] ?? null,
             'target_tree' => $tree,

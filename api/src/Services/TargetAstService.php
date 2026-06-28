@@ -1,8 +1,13 @@
 <?php
 /**
  * NexAlert - Target AST Service
- * Parses nested AND/OR targeting expressions, normalizes to DNF,
- * and converts builder trees to flat conjunctions for alert_targets resolution.
+ * Parses nested AND/OR targeting expressions, optional EXCEPT/NOT exclusions,
+ * normalizes include to DNF, and converts builder trees for alert_targets resolution.
+ *
+ * Exclusion syntax (applied to the full include set):
+ *   (tag:eng AND org:nexstar) EXCEPT user:david
+ *   tag:eng AND org:nexstar AND NOT user:david
+ *   tag:eng EXCEPT (user:a OR user:b OR group:exec@nexstar)
  */
 
 declare(strict_types=1);
@@ -27,14 +32,29 @@ class TargetAstService
         }
 
         try {
+            $expression = self::normalizeAndNotToExcept($expression);
+            [$includeStr, $exceptStr] = self::splitTopLevelKeyword($expression, 'EXCEPT');
+
             $pos = 0;
-            $ast = self::parseOrExpr($expression, $pos);
-            self::skipWs($expression, $pos);
-            if ($pos < strlen($expression)) {
-                return ['ast' => null, 'errors' => ['Unexpected text after expression: ' . substr($expression, $pos, 40)]];
+            $includeAst = self::parseOrExpr($includeStr, $pos);
+            self::skipWs($includeStr, $pos);
+            if ($pos < strlen($includeStr)) {
+                return [
+                    'ast'    => null,
+                    'errors' => ['Unexpected text in include expression: ' . substr($includeStr, $pos, 40)],
+                ];
             }
 
-            return ['ast' => self::normalizeAst($ast), 'errors' => []];
+            $exceptTerms = [];
+            if ($exceptStr !== null && trim($exceptStr) !== '') {
+                $exceptParsed = self::parseExceptClause(trim($exceptStr));
+                if ($exceptParsed['errors'] !== []) {
+                    return ['ast' => null, 'errors' => $exceptParsed['errors']];
+                }
+                $exceptTerms = $exceptParsed['terms'];
+            }
+
+            return ['ast' => self::wrapTargetAst(self::normalizeAst($includeAst), $exceptTerms), 'errors' => []];
         } catch (\InvalidArgumentException $e) {
             return ['ast' => null, 'errors' => [$e->getMessage()]];
         }
@@ -47,7 +67,32 @@ class TargetAstService
     public static function treeToAst(array $tree): array
     {
         try {
-            return ['ast' => self::normalizeAst(self::treeNodeToAst($tree)), 'errors' => []];
+            if (($tree['type'] ?? '') === 'target') {
+                $includeNode = $tree['include'] ?? null;
+                if (!is_array($includeNode)) {
+                    throw new \InvalidArgumentException('Target tree missing include group');
+                }
+
+                $includeAst = self::normalizeAst(self::treeNodeToAst($includeNode));
+                $exceptTerms = [];
+                $exceptNode  = $tree['except'] ?? null;
+                if (is_array($exceptNode) && ($exceptNode['type'] ?? '') === 'group') {
+                    foreach ($exceptNode['children'] ?? [] as $child) {
+                        if (!is_array($child)) {
+                            continue;
+                        }
+                        $term = self::treeNodeToAst($child);
+                        if (($term['type'] ?? '') !== 'term') {
+                            throw new \InvalidArgumentException('EXCEPT terms must be simple dimension terms');
+                        }
+                        $exceptTerms[] = $term;
+                    }
+                }
+
+                return ['ast' => self::wrapTargetAst($includeAst, $exceptTerms), 'errors' => []];
+            }
+
+            return ['ast' => self::wrapTargetAst(self::normalizeAst(self::treeNodeToAst($tree)), []), 'errors' => []];
         } catch (\InvalidArgumentException $e) {
             return ['ast' => null, 'errors' => [$e->getMessage()]];
         }
@@ -92,12 +137,14 @@ class TargetAstService
      */
     public static function astToDnf(array $ast): array
     {
-        if (($ast['type'] ?? '') === 'group' && ($ast['children'] ?? []) === []) {
+        $includeAst = self::unwrapInclude($ast);
+
+        if (($includeAst['type'] ?? '') === 'group' && ($includeAst['children'] ?? []) === []) {
             return ['conjunctions' => [], 'errors' => ['Target tree is empty']];
         }
 
         try {
-            $conjunctions = self::dnfFromNode($ast);
+            $conjunctions = self::dnfFromNode($includeAst);
 
             return ['conjunctions' => $conjunctions, 'errors' => []];
         } catch (\InvalidArgumentException $e) {
@@ -127,7 +174,70 @@ class TargetAstService
      */
     public static function astToExpression(array $ast): string
     {
+        if (($ast['type'] ?? '') === 'target') {
+            $include = self::stringifyNode($ast['include'] ?? [], false);
+            $except  = $ast['except'] ?? [];
+            if ($except === []) {
+                return $include;
+            }
+
+            return $include . ' EXCEPT ' . self::exceptTermsToExpression($except);
+        }
+
         return self::stringifyNode($ast, false);
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    public static function unwrapInclude(array $ast): array
+    {
+        if (($ast['type'] ?? '') === 'target') {
+            return $ast['include'] ?? ['type' => 'group', 'op' => 'OR', 'children' => []];
+        }
+
+        return $ast;
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    public static function getExceptTerms(array $ast): array
+    {
+        if (($ast['type'] ?? '') !== 'target') {
+            return [];
+        }
+
+        $terms = $ast['except'] ?? [];
+
+        return is_array($terms) ? $terms : [];
+    }
+
+    /**
+     * @param list<array<string, mixed>> $exceptTerms
+     * @return array<string, mixed>
+     */
+    public static function wrapTargetAst(array $includeAst, array $exceptTerms): array
+    {
+        if ($exceptTerms === []) {
+            return $includeAst;
+        }
+
+        return [
+            'type'    => 'target',
+            'include' => $includeAst,
+            'except'  => array_values($exceptTerms),
+        ];
+    }
+
+    /** Default builder tree with optional EXCEPT section. */
+    public static function emptyTargetTree(): array
+    {
+        return [
+            'type'    => 'target',
+            'include' => self::emptyTree(),
+            'except'  => ['type' => 'group', 'op' => 'OR', 'children' => []],
+        ];
     }
 
     /**
@@ -248,7 +358,15 @@ class TargetAstService
         $start = $pos;
         $len   = strlen($s);
 
-        while ($pos < $len && !ctype_space($s[$pos]) && $s[$pos] !== ')' && !self::wordAt($s, $pos, 'AND') && !self::wordAt($s, $pos, 'OR')) {
+        while (
+            $pos < $len
+            && !ctype_space($s[$pos])
+            && $s[$pos] !== ')'
+            && !self::wordAt($s, $pos, 'AND')
+            && !self::wordAt($s, $pos, 'OR')
+            && !self::wordAt($s, $pos, 'NOT')
+            && !self::wordAt($s, $pos, 'EXCEPT')
+        ) {
             $pos++;
         }
 
@@ -518,6 +636,238 @@ class TargetAstService
         }
 
         return $inner;
+    }
+
+    // ------------------------------------------------------------------
+    // EXCEPT / NOT
+    // ------------------------------------------------------------------
+
+    /**
+     * Convert trailing " AND NOT term" suffixes to " EXCEPT term".
+     */
+    private static function normalizeAndNotToExcept(string $expr): string
+    {
+        $exceptParts = [];
+
+        while (true) {
+            $split = self::splitTrailingAndNot($expr);
+            if ($split === null) {
+                break;
+            }
+
+            [$expr, $term] = $split;
+            $exceptParts[] = $term;
+        }
+
+        if ($exceptParts === []) {
+            return trim($expr);
+        }
+
+        $exceptClause = count($exceptParts) === 1
+            ? $exceptParts[0]
+            : '(' . implode(' OR ', $exceptParts) . ')';
+
+        return trim($expr) . ' EXCEPT ' . $exceptClause;
+    }
+
+    /** @return array{0: string, 1: string}|null */
+    private static function splitTrailingAndNot(string $expr): ?array
+    {
+        $needle = ' AND NOT ';
+        $pos    = self::lastTopLevelOccurrence($expr, $needle);
+        if ($pos === false) {
+            return null;
+        }
+
+        $include = trim(substr($expr, 0, $pos));
+        $term    = trim(substr($expr, $pos + strlen($needle)));
+        if ($include === '' || $term === '' || !preg_match('/^(org|node|tag|group|user):/i', $term)) {
+            throw new \InvalidArgumentException('Invalid AND NOT exclusion term: ' . $term);
+        }
+
+        return [$include, $term];
+    }
+
+    /**
+     * @return array{terms: list<array<string, mixed>>, errors: string[]}
+     */
+    private static function parseExceptClause(string $s): array
+    {
+        try {
+            $pos = 0;
+            $ast = self::parseOrExpr($s, $pos);
+            self::skipWs($s, $pos);
+            if ($pos < strlen($s)) {
+                return ['terms' => [], 'errors' => ['Unexpected text in EXCEPT clause: ' . substr($s, $pos, 40)]];
+            }
+
+            $terms = self::flattenExceptTerms($ast);
+            if ($terms === []) {
+                return ['terms' => [], 'errors' => ['EXCEPT clause must contain at least one term']];
+            }
+
+            return ['terms' => $terms, 'errors' => []];
+        } catch (\InvalidArgumentException $e) {
+            return ['terms' => [], 'errors' => [$e->getMessage()]];
+        }
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    private static function flattenExceptTerms(array $node): array
+    {
+        if (($node['type'] ?? '') === 'term') {
+            return [$node];
+        }
+
+        if (($node['type'] ?? '') === 'group' && strtoupper((string) ($node['op'] ?? '')) === 'OR') {
+            $terms = [];
+            foreach ($node['children'] ?? [] as $child) {
+                if (!is_array($child) || ($child['type'] ?? '') !== 'term') {
+                    throw new \InvalidArgumentException('EXCEPT supports simple terms joined by OR');
+                }
+                $terms[] = $child;
+            }
+
+            return $terms;
+        }
+
+        throw new \InvalidArgumentException('EXCEPT clause must be a term or OR of terms');
+    }
+
+    /**
+     * @param list<array<string, mixed>> $terms
+     */
+    private static function exceptTermsToExpression(array $terms): string
+    {
+        $parts = array_map(
+            fn (array $term): string => ($term['dim'] ?? '') . ':' . ($term['value'] ?? ''),
+            $terms
+        );
+        $parts = array_values(array_filter($parts, fn (string $p): bool => $p !== ':'));
+
+        if ($parts === []) {
+            return '';
+        }
+
+        if (count($parts) === 1) {
+            return $parts[0];
+        }
+
+        return '(' . implode(' OR ', $parts) . ')';
+    }
+
+    /**
+     * @return array{0: string, 1: ?string}
+     */
+    private static function splitTopLevelKeyword(string $expr, string $keyword): array
+    {
+        $parts = self::splitTopLevel($expr, $keyword);
+        if ($parts === []) {
+            return [trim($expr), null];
+        }
+
+        $include = trim(array_shift($parts));
+        if ($parts === []) {
+            return [$include, null];
+        }
+
+        $exceptParts = array_values(array_filter(array_map('trim', $parts), fn (string $p): bool => $p !== ''));
+        if ($exceptParts === []) {
+            return [$include, null];
+        }
+
+        $except = count($exceptParts) === 1
+            ? $exceptParts[0]
+            : '(' . implode(' OR ', $exceptParts) . ')';
+
+        return [$include, $except];
+    }
+
+    /** @return string[] */
+    private static function splitTopLevel(string $expr, string $delimiter): array
+    {
+        $parts   = [];
+        $depth   = 0;
+        $current = '';
+        $len     = strlen($expr);
+        $delLen  = strlen($delimiter);
+
+        for ($i = 0; $i < $len; $i++) {
+            $ch = $expr[$i];
+            if ($ch === '(') {
+                $depth++;
+                $current .= $ch;
+                continue;
+            }
+            if ($ch === ')') {
+                $depth--;
+                $current .= $ch;
+                continue;
+            }
+
+            if ($depth === 0 && strncasecmp(substr($expr, $i), $delimiter, $delLen) === 0) {
+                $before = $i === 0 ? ' ' : $expr[$i - 1];
+                $after  = ($i + $delLen >= $len) ? ' ' : $expr[$i + $delLen];
+                if ((ctype_space($before) || $before === '(') && (ctype_space($after) || $after === ')')) {
+                    if (trim($current) !== '') {
+                        $parts[] = trim($current);
+                    }
+                    $current = '';
+                    $i      += $delLen - 1;
+                    continue;
+                }
+            }
+
+            $current .= $ch;
+        }
+
+        if (trim($current) !== '') {
+            $parts[] = trim($current);
+        }
+
+        return $parts;
+    }
+
+    /** @return int|false */
+    private static function lastTopLevelOccurrence(string $expr, string $needle): int|false
+    {
+        $len       = strlen($expr);
+        $needleLen = strlen($needle);
+        $last      = false;
+
+        for ($i = 0; $i <= $len - $needleLen; $i++) {
+            if (strncasecmp(substr($expr, $i), $needle, $needleLen) !== 0) {
+                continue;
+            }
+
+            $before = $i === 0 ? ' ' : $expr[$i - 1];
+            $after  = ($i + $needleLen >= $len) ? ' ' : $expr[$i + $needleLen];
+            if (!(ctype_space($before) || $before === '(') || !(ctype_space($after) || $after === ')')) {
+                continue;
+            }
+
+            if (self::depthAt($expr, $i) === 0) {
+                $last = $i;
+            }
+        }
+
+        return $last;
+    }
+
+    private static function depthAt(string $expr, int $pos): int
+    {
+        $depth = 0;
+        for ($i = 0; $i < $pos; $i++) {
+            if ($expr[$i] === '(') {
+                $depth++;
+            } elseif ($expr[$i] === ')') {
+                $depth--;
+            }
+        }
+
+        return $depth;
     }
 
     // ------------------------------------------------------------------
