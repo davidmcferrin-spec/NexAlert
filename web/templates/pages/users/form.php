@@ -92,14 +92,33 @@ if ($isEdit) {
 
             <div>
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">Email</label>
+                <?php if (!$isEdit): ?>
                 <input type="email" name="email"
                        value="<?= htmlspecialchars(($user['contacts'] ?? [])[0]['contact_value'] ?? '') ?>"
-                       <?= $isEdit ? 'readonly class="opacity-60"' : '' ?>
                        class="w-full px-3 py-2 text-sm rounded-xl border border-gray-300 dark:border-gray-700
                               bg-white dark:bg-gray-800 text-gray-900 dark:text-white
                               focus:outline-none focus:ring-2 focus:ring-red-500">
-                <?php if ($isEdit): ?>
-                <p class="text-xs text-gray-400 mt-1">Manage contact info in the Contacts panel below.</p>
+                <?php else:
+                    $primaryEmail = '';
+                    foreach ($user['contacts'] ?? [] as $c) {
+                        if (($c['channel'] ?? '') === 'email' && !empty($c['is_primary'])) {
+                            $primaryEmail = $c['contact_value'] ?? '';
+                            break;
+                        }
+                    }
+                    if ($primaryEmail === '' && !empty($user['contacts'])) {
+                        foreach ($user['contacts'] as $c) {
+                            if (($c['channel'] ?? '') === 'email') {
+                                $primaryEmail = $c['contact_value'] ?? '';
+                                break;
+                            }
+                        }
+                    }
+                ?>
+                <div class="text-sm font-mono text-gray-600 dark:text-gray-300 py-2">
+                    <?= htmlspecialchars($primaryEmail !== '' ? $primaryEmail : '—') ?>
+                </div>
+                <p class="text-xs text-gray-400 mt-1">Edit email in the Contacts panel below.</p>
                 <?php endif; ?>
             </div>
 
@@ -189,35 +208,123 @@ if ($isEdit) {
     </div>
 
     <?php if ($isEdit && $user): ?>
+    <!-- Password panel -->
+    <div class="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 overflow-hidden mb-6"
+         x-data="passwordPanel(<?= $userId ?>)">
+        <div class="px-5 py-4 border-b border-gray-100 dark:border-gray-800">
+            <h3 class="text-sm font-semibold text-gray-900 dark:text-white">Password</h3>
+            <p class="text-xs text-gray-400 mt-0.5">Send a reset link to the user's email, or set a password directly.</p>
+        </div>
+        <div class="p-5 space-y-4">
+            <div class="flex flex-wrap gap-2">
+                <button @click="sendResetLink()" :disabled="resetSending"
+                        class="px-4 py-2 text-sm font-semibold bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-xl disabled:opacity-50 transition-colors">
+                    <span x-text="resetSending ? 'Sending…' : 'Send reset email'"></span>
+                </button>
+            </div>
+            <div class="border-t border-gray-100 dark:border-gray-800 pt-4">
+                <p class="text-xs font-medium text-gray-500 mb-2">Or set password directly</p>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-lg">
+                    <input type="password" x-model="setPassword.password" placeholder="New password (12+ chars)" minlength="12"
+                           class="px-3 py-2 text-sm rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800">
+                    <input type="password" x-model="setPassword.confirm" placeholder="Confirm password" minlength="12"
+                           class="px-3 py-2 text-sm rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800">
+                </div>
+                <button @click="setPasswordDirect()" :disabled="setPasswordSaving"
+                        class="mt-3 px-4 py-2 text-sm font-semibold bg-red-600 hover:bg-red-700 text-white rounded-xl disabled:opacity-50">
+                    <span x-text="setPasswordSaving ? 'Saving…' : 'Set password'"></span>
+                </button>
+            </div>
+        </div>
+    </div>
+
     <!-- Contacts panel -->
     <div class="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 overflow-hidden mb-6"
          x-data="contactsPanel(<?= $userId ?>)"
          x-init="contacts = <?= htmlspecialchars(json_encode($user['contacts'] ?? [], JSON_THROW_ON_ERROR), ENT_QUOTES, 'UTF-8') ?>">
-        <div class="px-5 py-4 border-b border-gray-100 dark:border-gray-800">
-            <h3 class="text-sm font-semibold text-gray-900 dark:text-white">
-                <?= tip_label('Contacts & SMS consent', 'SMS alerts require confirmed opt-in (YES reply to Twilio).') ?>
-            </h3>
+        <div class="px-5 py-4 border-b border-gray-100 dark:border-gray-800 flex items-center justify-between">
+            <div>
+                <h3 class="text-sm font-semibold text-gray-900 dark:text-white">
+                    <?= tip_label('Contacts & SMS consent', 'Edit email/phone, mark email verified, manage SMS opt-in.') ?>
+                </h3>
+            </div>
+            <button @click="showAdd = !showAdd" class="text-xs font-semibold text-red-600 hover:text-red-700">
+                <span x-text="showAdd ? 'Cancel' : '+ Add contact'"></span>
+            </button>
         </div>
+
+        <div x-show="showAdd" x-cloak class="px-5 py-4 border-b border-gray-100 dark:border-gray-800 bg-gray-50 dark:bg-gray-800/40 space-y-3">
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <select x-model="newContact.channel"
+                        class="px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+                    <option value="email">Email</option>
+                    <option value="sms">Mobile phone (SMS)</option>
+                </select>
+                <input type="text" x-model="newContact.contact_value"
+                       :placeholder="newContact.channel === 'sms' ? '+1 555 123 4567' : 'user@example.com'"
+                       class="px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 sm:col-span-2">
+            </div>
+            <label x-show="newContact.channel === 'email'" class="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
+                <input type="checkbox" x-model="newContact.mark_verified" class="rounded border-gray-300">
+                Mark email verified (admin confirmed)
+            </label>
+            <label x-show="newContact.channel === 'sms'" class="flex items-center gap-2 text-xs text-gray-600 dark:text-gray-400">
+                <input type="checkbox" x-model="newContact.send_sms_optin" checked class="rounded border-gray-300">
+                Send SMS opt-in
+            </label>
+            <button @click="addContact()" :disabled="!newContact.contact_value.trim()"
+                    class="px-4 py-2 text-sm font-semibold bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white rounded-lg">
+                Add contact
+            </button>
+        </div>
+
         <div class="divide-y divide-gray-100 dark:divide-gray-800">
             <template x-for="c in contacts" :key="c.id">
-                <div class="flex items-center justify-between px-5 py-3 gap-3">
-                    <div>
-                        <span class="text-xs uppercase text-gray-400" x-text="c.channel"></span>
-                        <div class="text-sm font-mono" x-text="c.contact_value"></div>
-                        <div class="text-xs mt-0.5">
-                            <span x-show="c.is_verified == 1" class="text-green-600">Email verified</span>
-                            <span x-show="c.channel === 'sms' && c.sms_consent_status"
-                                  class="capitalize"
-                                  :class="c.sms_consent_status === 'confirmed' ? 'text-green-600' : 'text-amber-600'"
-                                  x-text="'SMS: ' + (c.sms_consent_status || 'pending')"></span>
+                <div class="px-5 py-3 gap-3">
+                    <div class="flex items-start justify-between gap-3">
+                        <div class="flex-1 min-w-0">
+                            <span class="text-xs uppercase text-gray-400" x-text="c.channel === 'sms' ? 'Mobile phone' : 'Email'"></span>
+                            <template x-if="editingId !== c.id">
+                                <div class="text-sm font-mono break-all" x-text="c.contact_value"></div>
+                            </template>
+                            <template x-if="editingId === c.id">
+                                <input type="text" x-model="editValue"
+                                       class="mt-1 w-full px-3 py-1.5 text-sm font-mono rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+                            </template>
+                            <div class="text-xs mt-0.5">
+                                <span x-show="c.is_verified == 1" class="text-green-600">Email verified</span>
+                                <span x-show="c.channel === 'sms' && c.sms_consent_status"
+                                      class="capitalize"
+                                      :class="c.sms_consent_status === 'confirmed' ? 'text-green-600' : 'text-amber-600'"
+                                      x-text="'SMS: ' + (c.sms_consent_status || 'pending')"></span>
+                            </div>
+                        </div>
+                        <div class="flex flex-col items-end gap-1 flex-shrink-0">
+                            <template x-if="editingId !== c.id">
+                                <button @click="startEdit(c)" class="text-xs text-blue-600 hover:underline">Edit</button>
+                            </template>
+                            <template x-if="editingId === c.id">
+                                <div class="flex gap-2">
+                                    <button @click="saveEdit(c)" class="text-xs font-semibold text-green-600">Save</button>
+                                    <button @click="cancelEdit()" class="text-xs text-gray-400">Cancel</button>
+                                </div>
+                            </template>
+                            <label x-show="c.channel === 'email' && editingId === c.id" class="flex items-center gap-1 text-xs text-gray-500">
+                                <input type="checkbox" x-model="markVerified" class="rounded border-gray-300">
+                                Verified
+                            </label>
+                            <button x-show="c.channel === 'email' && c.is_verified != 1 && editingId !== c.id"
+                                    @click="markVerifiedContact(c)"
+                                    class="text-xs text-blue-600">Mark verified</button>
+                            <button x-show="c.channel === 'sms' && c.sms_consent_status !== 'confirmed'"
+                                    @click="resendSmsOptIn(c)"
+                                    :disabled="optInSending === c.id"
+                                    class="text-xs font-semibold text-green-600 hover:text-green-700 disabled:opacity-50">
+                                <span x-text="optInSending === c.id ? 'Sending…' : 'Send opt-in'"></span>
+                            </button>
+                            <button x-show="editingId !== c.id" @click="removeContact(c)" class="text-xs text-red-400 hover:text-red-600">Remove</button>
                         </div>
                     </div>
-                    <button x-show="c.channel === 'sms' && c.sms_consent_status !== 'confirmed'"
-                            @click="resendSmsOptIn(c)"
-                            :disabled="optInSending === c.id"
-                            class="text-xs font-semibold text-green-600 hover:text-green-700 disabled:opacity-50">
-                        <span x-text="optInSending === c.id ? 'Sending…' : 'Send opt-in'"></span>
-                    </button>
                 </div>
             </template>
             <div x-show="!contacts.length" class="px-5 py-4 text-sm text-gray-400">No contacts on file.</div>
@@ -719,6 +826,76 @@ function contactsPanel(userId) {
     return {
         contacts: [],
         optInSending: null,
+        showAdd: false,
+        editingId: null,
+        editValue: '',
+        markVerified: true,
+        newContact: { channel: 'email', contact_value: '', mark_verified: true, send_sms_optin: true },
+
+        startEdit(c) {
+            this.editingId = c.id;
+            this.editValue = c.contact_value;
+            this.markVerified = c.is_verified == 1;
+        },
+        cancelEdit() {
+            this.editingId = null;
+            this.editValue = '';
+        },
+        async saveEdit(c) {
+            const body = { contact_value: this.editValue.trim() };
+            if (c.channel === 'email') body.mark_verified = this.markVerified;
+            const res = await api.put(`/users/${userId}/contacts/${c.id}`, body);
+            if (res.ok) {
+                toast('Contact updated');
+                this.contacts = res.data.data.contacts || [];
+                this.cancelEdit();
+            } else {
+                toast(res.data?.error || Object.values(res.data?.errors || {}).join(' ') || 'Failed', 'error');
+            }
+        },
+        async markVerifiedContact(c) {
+            const res = await api.put(`/users/${userId}/contacts/${c.id}`, {
+                contact_value: c.contact_value,
+                mark_verified: true,
+            });
+            if (res.ok) {
+                toast('Email marked verified');
+                this.contacts = res.data.data.contacts || [];
+            } else {
+                toast(res.data?.error || 'Failed', 'error');
+            }
+        },
+        async addContact() {
+            const body = {
+                channel: this.newContact.channel,
+                contact_value: this.newContact.contact_value.trim(),
+                is_primary: true,
+            };
+            if (this.newContact.channel === 'email') {
+                body.mark_verified = this.newContact.mark_verified;
+            } else {
+                body.send_sms_optin = this.newContact.send_sms_optin;
+            }
+            const res = await api.post(`/users/${userId}/contacts`, body);
+            if (res.ok) {
+                toast('Contact added');
+                this.contacts = res.data.data.contacts || [];
+                this.newContact = { channel: 'email', contact_value: '', mark_verified: true, send_sms_optin: true };
+                this.showAdd = false;
+            } else {
+                toast(res.data?.error || Object.values(res.data?.errors || {}).join(' ') || 'Failed', 'error');
+            }
+        },
+        async removeContact(c) {
+            if (!confirm(`Remove ${c.channel} contact ${c.contact_value}?`)) return;
+            const res = await api.delete(`/users/${userId}/contacts/${c.id}`);
+            if (res.ok) {
+                toast('Contact removed');
+                this.contacts = res.data.data.contacts || [];
+            } else {
+                toast(res.data?.error || 'Failed', 'error');
+            }
+        },
         async resendSmsOptIn(c) {
             this.optInSending = c.id;
             const res = await api.post(`/users/${userId}/sms-optin`, { contact_id: c.id });
@@ -728,6 +905,43 @@ function contactsPanel(userId) {
                 c.sms_consent_status = 'invite_sent';
             } else {
                 toast(res.data?.error || 'Failed to queue opt-in', 'error');
+            }
+        }
+    };
+}
+
+function passwordPanel(userId) {
+    return {
+        resetSending: false,
+        setPasswordSaving: false,
+        setPassword: { password: '', confirm: '' },
+        async sendResetLink() {
+            this.resetSending = true;
+            const res = await api.post(`/users/${userId}/reset-password`, { action: 'send_link' });
+            this.resetSending = false;
+            if (res.ok) {
+                toast('Reset email sent to ' + (res.data.data?.email || 'user'));
+            } else {
+                toast(res.data?.error || 'Failed to send reset email', 'error');
+            }
+        },
+        async setPasswordDirect() {
+            if (this.setPassword.password !== this.setPassword.confirm) {
+                toast('Passwords do not match', 'error');
+                return;
+            }
+            this.setPasswordSaving = true;
+            const res = await api.post(`/users/${userId}/reset-password`, {
+                action: 'set_password',
+                password: this.setPassword.password,
+                password_confirm: this.setPassword.confirm,
+            });
+            this.setPasswordSaving = false;
+            if (res.ok) {
+                toast('Password updated');
+                this.setPassword = { password: '', confirm: '' };
+            } else {
+                toast(res.data?.error || res.data?.errors?.password?.[0] || 'Failed', 'error');
             }
         }
     };

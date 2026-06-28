@@ -13,6 +13,7 @@ use NexAlert\Api\Response;
 use NexAlert\Config\Database;
 use NexAlert\Config\Logger;
 use NexAlert\Services\AuditService;
+use NexAlert\Services\ChatService;
 
 class WebhookController
 {
@@ -74,6 +75,17 @@ class WebhookController
                 [(int) $consent['id']]
             );
             self::twimlResponse('SMS alerts declined. You will not receive SMS from NexAlert.');
+        }
+
+        $messageSid = trim((string) $request->input('MessageSid', ''));
+        $originalBody = trim((string) $request->input('Body', ''));
+        if (ChatService::handleInboundSms(
+            $db,
+            (int) $consent['user_id'],
+            $originalBody,
+            $messageSid !== '' ? $messageSid : null
+        )) {
+            self::twimlResponse('');
         }
 
         Logger::info('Twilio inbound SMS (unhandled)', ['from' => $phone, 'body' => $body]);

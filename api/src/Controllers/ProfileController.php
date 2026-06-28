@@ -6,6 +6,7 @@
  * PUT  /api/v1/profile              → update display name, timezone
  * GET  /api/v1/profile/contacts     → list contacts
  * POST /api/v1/profile/contacts     → add contact
+ * PUT  /api/v1/profile/contacts/{id} → update contact value
  * DELETE /api/v1/profile/contacts/{id} → remove contact
  * POST /api/v1/profile/contacts/{id}/verify → resend verification
  * POST /api/v1/profile/sms-optin    → request SMS opt-in for phone contact
@@ -28,6 +29,7 @@ use NexAlert\Services\MailService;
 use NexAlert\Services\PollService;
 use NexAlert\Services\RowNormalizer;
 use NexAlert\Services\SmsConsentService;
+use NexAlert\Services\WebPushService;
 
 class ProfileController
 {
@@ -133,6 +135,81 @@ class ProfileController
         ], $userId);
 
         Response::success(['id' => $contactId], 'Contact added', 201);
+    }
+
+    /**
+     * PUT /api/v1/profile/contacts/{id}
+     * Body: { "contact_value": "..." }
+     */
+    public static function updateContact(Request $request): never
+    {
+        $db        = Database::getInstance();
+        $userId    = (int) $request->user['uid'];
+        $contactId = (int) $request->param('id');
+
+        $contact = $db->fetchOne(
+            'SELECT id, channel, contact_value FROM user_contacts
+             WHERE id = ? AND user_id = ? AND is_active = 1',
+            [$contactId, $userId]
+        );
+        if (!$contact) {
+            Response::notFound('Contact not found');
+        }
+
+        $channel = (string) $contact['channel'];
+        $value   = trim((string) $request->input('contact_value', ''));
+
+        if ($value === '') {
+            Response::validationError(['contact_value' => 'Required']);
+        }
+
+        if ($channel === 'sms') {
+            $value = UserController::normalizePhone($value);
+        } elseif (!filter_var($value, FILTER_VALIDATE_EMAIL)) {
+            Response::validationError(['contact_value' => 'Invalid email address']);
+        }
+
+        if ($value === $contact['contact_value']) {
+            Response::success(null, 'No changes');
+        }
+
+        if ($channel === 'email') {
+            $db->execute(
+                'UPDATE user_contacts SET contact_value = ?, is_verified = 0, verified_at = NULL WHERE id = ?',
+                [$value, $contactId]
+            );
+            self::sendContactVerification($db, $userId, $contactId, $value);
+        } else {
+            $consent = $db->fetchOne(
+                'SELECT id, status FROM user_sms_consent WHERE contact_id = ?',
+                [$contactId]
+            );
+            if ($consent && $consent['status'] === 'stopped') {
+                Response::error('This number opted out via STOP. Remove it and add a new phone number.', 409);
+            }
+
+            $db->execute(
+                'UPDATE user_contacts SET contact_value = ? WHERE id = ?',
+                [$value, $contactId]
+            );
+
+            if ($consent) {
+                $db->execute(
+                    "UPDATE user_sms_consent
+                     SET phone_e164 = ?, status = 'pending', confirmed_at = NULL, opt_in_sent_at = NULL
+                     WHERE contact_id = ?",
+                    [$value, $contactId]
+                );
+            } else {
+                SmsConsentService::ensureConsentRecord($db, $userId, $contactId, $value, $userId);
+            }
+        }
+
+        AuditService::log('profile.contact_updated', 'user_contact', (string) $contactId, [
+            'channel' => $channel,
+        ], $userId);
+
+        Response::success(['contacts' => self::fetchContacts($db, $userId)], 'Contact updated');
     }
 
     public static function deleteContact(Request $request): never
@@ -291,12 +368,14 @@ class ProfileController
 
         $alerts = $db->fetchAll(
             'SELECT DISTINCT a.id, a.subject, a.body, a.severity, a.alert_type, a.status,
-                    a.ack_required, a.created_at, a.sent_at, a.expires_at,
+                    a.ack_required, a.created_at, a.sent_at, a.expires_at, a.created_by_user,
                     a.poll_question, a.poll_options,
+                    ct.is_open AS chat_is_open,
                     (SELECT COUNT(*) FROM alert_acks aa WHERE aa.alert_id = a.id AND aa.user_id = ?) AS i_acked,
                     (SELECT COUNT(*) FROM poll_responses pr WHERE pr.alert_id = a.id AND pr.user_id = ?) AS i_voted
              FROM alerts a
              JOIN alert_deliveries ad ON ad.alert_id = a.id
+             LEFT JOIN chat_threads ct ON ct.alert_id = a.id
              WHERE ad.user_id = ?
              ORDER BY a.created_at DESC
              LIMIT ? OFFSET ?',
@@ -306,10 +385,61 @@ class ProfileController
         foreach ($alerts as &$alert) {
             $alert['poll_options'] = PollService::parsePollOptions($alert);
             $alert['is_expired']   = PollService::isExpired($alert);
+            $alert['is_originator'] = (int) ($alert['created_by_user'] ?? 0) === $userId;
+            $alert['can_chat'] = in_array($alert['alert_type'], ['chat', 'group_chat'], true)
+                && !$alert['is_expired']
+                && in_array($alert['status'], ['sending', 'sent'], true)
+                && (int) ($alert['chat_is_open'] ?? 1) === 1;
         }
         unset($alert);
 
         Response::success(['alerts' => $alerts, 'total' => $total, 'limit' => $limit, 'offset' => $offset]);
+    }
+
+    public static function pushVapidKey(Request $request): never
+    {
+        Response::success([
+            'public_key'  => WebPushService::getPublicKey(),
+            'configured'  => WebPushService::isConfigured(),
+        ]);
+    }
+
+    public static function listPushSubscriptions(Request $request): never
+    {
+        $db     = Database::getInstance();
+        $userId = (int) $request->user['uid'];
+
+        Response::success([
+            'subscriptions' => WebPushService::listSubscriptions($db, $userId),
+            'configured'    => WebPushService::isConfigured(),
+        ]);
+    }
+
+    public static function subscribePush(Request $request): never
+    {
+        $db     = Database::getInstance();
+        $userId = (int) $request->user['uid'];
+
+        $sub = WebPushService::subscribe($db, $userId, [
+            'endpoint'     => $request->input('endpoint'),
+            'p256dh'       => $request->input('p256dh') ?? $request->input('keys.p256dh'),
+            'auth'         => $request->input('auth') ?? $request->input('keys.auth'),
+            'device_label' => $request->input('device_label'),
+            'user_agent'   => $request->input('user_agent') ?? ($_SERVER['HTTP_USER_AGENT'] ?? ''),
+        ]);
+
+        Response::success($sub, 'Push subscription saved');
+    }
+
+    public static function unsubscribePush(Request $request): never
+    {
+        $db     = Database::getInstance();
+        $userId = (int) $request->user['uid'];
+        $subId  = (int) $request->param('id');
+
+        WebPushService::unsubscribe($db, $userId, $subId);
+
+        Response::success(null, 'Push subscription removed');
     }
 
     public static function changePassword(Request $request): never

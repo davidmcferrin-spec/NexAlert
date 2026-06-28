@@ -86,6 +86,10 @@ return function (Router $router): void {
         $r->put('/{id:\d+}',     [UserController::class, 'update'], [AuthMiddleware::required()]);
         $r->delete('/{id:\d+}',  [UserController::class, 'delete'], [AuthMiddleware::withPermission('user.manage')]);
         $r->post('/{id:\d+}/sms-optin', [UserController::class, 'requestSmsOptIn'], [AuthMiddleware::withPermission('user.manage')]);
+        $r->post('/{id:\d+}/reset-password', [UserController::class, 'resetPassword'], [AuthMiddleware::withPermission('user.manage')]);
+        $r->post('/{id:\d+}/contacts', [UserController::class, 'addContactRoute'], [AuthMiddleware::withPermission('user.manage')]);
+        $r->put('/{id:\d+}/contacts/{cid:\d+}', [UserController::class, 'updateContact'], [AuthMiddleware::withPermission('user.manage')]);
+        $r->delete('/{id:\d+}/contacts/{cid:\d+}', [UserController::class, 'deleteContact'], [AuthMiddleware::withPermission('user.manage')]);
 
         // Memberships
         $r->get('/{id:\d+}/memberships',           [UserController::class, 'listMemberships'],  [AuthMiddleware::required()]);
@@ -160,6 +164,9 @@ return function (Router $router): void {
         $r->get('/{id:\d+}',      [AlertController::class, 'get'],   [AuthMiddleware::required()]);
         $r->post('/{id:\d+}/ack',     [AlertController::class, 'ack'],    [AuthMiddleware::required()]);
         $r->post('/{id:\d+}/poll',    [AlertController::class, 'poll'],   [AuthMiddleware::required()]);
+        $r->get('/{id:\d+}/chat/messages',  [AlertController::class, 'chatMessages'], [AuthMiddleware::required()]);
+        $r->post('/{id:\d+}/chat/messages', [AlertController::class, 'chatSend'],     [AuthMiddleware::required()]);
+        $r->post('/{id:\d+}/chat/close',    [AlertController::class, 'chatClose'],    [AuthMiddleware::required()]);
         $r->post('/{id:\d+}/cancel',  [AlertController::class, 'cancel'], [AuthMiddleware::withPermission('alert.send')]);
         $r->post('/{id:\d+}/retry',   [AlertController::class, 'retry'],  [AuthMiddleware::withPermission('alert.send')]);
         $r->delete('/{id:\d+}',       [AlertController::class, 'delete'], [AuthMiddleware::required()]);
@@ -176,12 +183,17 @@ return function (Router $router): void {
         $r->put('/',                    [ProfileController::class, 'update'],             [AuthMiddleware::required()]);
         $r->get('/contacts',            [ProfileController::class, 'listContacts'],       [AuthMiddleware::required()]);
         $r->post('/contacts',           [ProfileController::class, 'addContact'],         [AuthMiddleware::required()]);
+        $r->put('/contacts/{id:\d+}',  [ProfileController::class, 'updateContact'],      [AuthMiddleware::required()]);
         $r->delete('/contacts/{id:\d+}', [ProfileController::class, 'deleteContact'],     [AuthMiddleware::required()]);
         $r->post('/contacts/{id:\d+}/verify', [ProfileController::class, 'resendVerification'], [AuthMiddleware::required()]);
         $r->post('/sms-optin',          [ProfileController::class, 'requestSmsOptIn'],    [AuthMiddleware::required()]);
         $r->get('/notifications',       [ProfileController::class, 'getNotificationPrefs'], [AuthMiddleware::required()]);
         $r->put('/notifications',       [ProfileController::class, 'updateNotificationPrefs'], [AuthMiddleware::required()]);
         $r->get('/alerts',              [ProfileController::class, 'myAlerts'],             [AuthMiddleware::required()]);
+        $r->get('/push/vapid-key',      [ProfileController::class, 'pushVapidKey'],       [AuthMiddleware::required()]);
+        $r->get('/push/subscriptions',  [ProfileController::class, 'listPushSubscriptions'], [AuthMiddleware::required()]);
+        $r->post('/push/subscribe',     [ProfileController::class, 'subscribePush'],      [AuthMiddleware::required()]);
+        $r->delete('/push/subscriptions/{id:\d+}', [ProfileController::class, 'unsubscribePush'], [AuthMiddleware::required()]);
         $r->post('/change-password',    [ProfileController::class, 'changePassword'],       [AuthMiddleware::required()]);
     });
 

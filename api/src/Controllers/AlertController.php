@@ -21,6 +21,7 @@ use NexAlert\Api\Response;
 use NexAlert\Config\Database;
 use NexAlert\Services\AlertService;
 use NexAlert\Services\AuditService;
+use NexAlert\Services\ChatService;
 use NexAlert\Services\PermissionService;
 use NexAlert\Services\PollService;
 
@@ -152,7 +153,55 @@ class AlertController
             $summary['poll_results'] = PollService::getResults($db, $id);
         }
 
+        if (in_array($summary['alert_type'], ['chat', 'group_chat'], true)) {
+            try {
+                $summary['chat'] = ChatService::listMessages($db, $id, (int) $request->user['uid']);
+            } catch (\Throwable) {
+                $summary['chat'] = null;
+            }
+        }
+
         Response::success($summary);
+    }
+
+    public static function chatMessages(Request $request): never
+    {
+        $alertId = (int) $request->param('id');
+        $db      = Database::getInstance();
+        $userId  = (int) $request->user['uid'];
+
+        self::assertAlertAccess($request, $alertId, $db);
+
+        $result = ChatService::listMessages($db, $alertId, $userId);
+
+        Response::success($result);
+    }
+
+    public static function chatSend(Request $request): never
+    {
+        $alertId = (int) $request->param('id');
+        $db      = Database::getInstance();
+        $userId  = (int) $request->user['uid'];
+
+        self::assertAlertAccess($request, $alertId, $db);
+
+        $body = trim((string) $request->input('body', ''));
+        $msg  = ChatService::sendMessage($db, $alertId, $userId, $body, 'web');
+
+        Response::success($msg, 'Message sent');
+    }
+
+    public static function chatClose(Request $request): never
+    {
+        $alertId = (int) $request->param('id');
+        $db      = Database::getInstance();
+        $userId  = (int) $request->user['uid'];
+
+        self::assertAlertAccess($request, $alertId, $db);
+
+        ChatService::closeThread($db, $alertId, $userId);
+
+        Response::success(null, 'Chat closed');
     }
 
     public static function poll(Request $request): never

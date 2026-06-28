@@ -245,6 +245,27 @@ $headerActions = '
                         <span x-show="detail.poll_results.is_expired" class="text-amber-600"> · poll closed</span>
                     </p>
                 </div>
+
+                <div x-show="['chat','group_chat'].includes(detail?.alert_type) && detail?.chat">
+                    <div class="flex items-center justify-between mb-2">
+                        <h4 class="text-sm font-semibold text-gray-900 dark:text-white">Chat thread</h4>
+                        <button x-show="detail.chat?.thread?.is_originator && detail.chat?.thread?.is_open == 1"
+                                @click="closeChat(detail)"
+                                class="text-xs text-amber-600 hover:underline">Close thread</button>
+                    </div>
+                    <div class="max-h-56 overflow-y-auto rounded-xl border border-gray-200 dark:border-gray-800 p-3 space-y-2 text-xs mb-2">
+                        <template x-for="m in (detail.chat?.messages || [])" :key="m.id">
+                            <div>
+                                <strong x-text="m.user_name"></strong>
+                                <span class="text-gray-400 ml-1" x-text="formatDate(m.created_at)"></span>
+                                <span class="text-gray-400" x-text="' · ' + m.source_channel"></span>
+                                <p class="text-gray-700 dark:text-gray-300 whitespace-pre-wrap mt-0.5" x-text="m.body"></p>
+                            </div>
+                        </template>
+                        <p x-show="!(detail.chat?.messages || []).length" class="text-gray-400">No messages yet.</p>
+                    </div>
+                    <p x-show="detail.chat?.thread?.is_open == 0" class="text-xs text-amber-600">Thread closed</p>
+                </div>
             </div>
 
             <div class="px-6 py-3 border-t border-gray-100 dark:border-gray-800 text-right">
@@ -341,6 +362,14 @@ function alertHistoryPage() {
                 const d = res.data.data;
                 this.ackUserIds = (d.acks || []).map(x => Number(x.user_id));
                 this.detail = { ...d, failed_count: a.failed_count, recipient_count: a.recipient_count ?? d.recipient_count };
+            } else toast(res.data?.error || 'Failed', 'error');
+        },
+        async closeChat(d) {
+            if (!confirm('Close this chat thread? Recipients can no longer reply.')) return;
+            const res = await api.post('/alerts/' + d.id + '/chat/close', {});
+            if (res.ok) {
+                toast('Chat closed');
+                await this.viewDetail(d);
             } else toast(res.data?.error || 'Failed', 'error');
         },
         async cancelAlert(a, fromModal = false) {

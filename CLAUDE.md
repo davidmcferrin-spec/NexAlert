@@ -32,69 +32,53 @@ Resolution at alert send time: recursive CTE or iterative BFS in the dispatch wo
 `audit_log` is append-only. No UPDATE or DELETE ever. Enforce this at the DB user permission level.
 
 ## Stack Constraints
-- PHP 8.2 / Apache — no Composer autoload (use manual requires), no Node.js
-- Python 3.11 asyncio — workers only, no Django/Flask
+- PHP 8.2+ / Apache — no Composer autoload (use manual requires), no Node.js
+- Python 3.11 — dispatch worker only (`workers/dispatch.py`)
 - No Docker — bare service installs
 - MySQL 8.0 — use utf8mb4_unicode_ci everywhere
-- Redis — queues and pubsub only
+- Redis — queues and pubsub only (optional; MySQL `jobs` table used on Dreamhost)
 
 ## Current Phase
-**Phase 2** — Alert send pipeline ✅, dispatch worker ✅, ack escalation ✅, AST targeting ✅, admin UI 🔄
+**Phase 2** ✅ complete — email/SMS dispatch, ack escalation, polls, TTL, scheduled send, AST targeting, admin UI  
+**Phase 3** 🔄 started — Web Push (VAPID) subscription + dispatch  
+**Phase 4** 🔄 started — `chat` / `group_chat` threads, SMS reply routing
 
-## Target Expression Engine (Phase 2)
+## Target Expression Engine
 - `TargetAstService` — parse expressions, normalize to DNF, support nested `target_tree` JSON
 - `TargetExpressionService` — preview, compile, multi-tag AND via `conj_terms` JSON (`db/007`)
-- Test Send UI — nested OR → AND branch → OR subgroup builder
-- Alert composer accepts `targets` (expression) and/or `target_tree` from sessionStorage handoff
+- Test Send UI — nested OR → AND branch builder; handoff to alert composer via sessionStorage
 
-## Ack Escalation (Phase 2)
-- `ack_deadline_at`, `escalated_at` on alerts (`db/008`)
-- Dispatch worker schedules `ack_escalate` job when alert fully sent with deadline + escalation user
-- Escalation email lists unacked recipients to `escalation_user_id`
+## Alert Pipeline (Phase 2+)
+- `AlertService::create()` — resolves targets, builds deliveries, enqueues dispatch
+- `workers/dispatch.py` — job types: `dispatch_alert`, `ack_escalate`, `alert_expire`, `sms_optin`
+- Poll votes: HMAC signed links (`PollService`), public `/poll/vote`, profile + API voting
+- TTL: `expires_at` set when send completes; `alert_expire` job skips queued deliveries
+- Scheduled: `send_at` → status `scheduled`; worker releases due alerts
+
+## Web Push (Phase 3)
+- `WebPushService` — subscription CRUD; VAPID public key via `GET /api/v1/profile/push/vapid-key`
+- `push_subscriptions` table; deliveries use `push_subscription_id` (`db/011`)
+- Service worker: `/sw.js`; dispatch via `pywebpush` in worker
+- Generate keys: `php scripts/generate_vapid.php`
+
+## Chat (Phase 4)
+- `chat_threads` + `chat_messages` per alert (`chat` vs `group_chat` visibility rules in `ChatService`)
+- API: `GET/POST /api/v1/alerts/{id}/chat/messages`, `POST .../chat/close`
+- Profile UI: reply inline; SMS inbound routed via `WebhookController` → `ChatService::handleInboundSms`
 
 ## Migration Naming
-`/db/NNN_description.sql` — zero-padded 3 digits, e.g. `002_add_alert_templates.sql`
+`/db/NNN_description.sql` — zero-padded 3 digits, run via `php migrate.php --migrate-only`
 
 ## Key Files
-- `db/001_initial_schema.sql` — full schema, 32 tables
+- `db/001_initial_schema.sql` — full schema
+- `api/routes.php` — all API routes
+- `app.php` — web frontend route table
+- `workers/dispatch.py` — dispatch + escalation + expire + push
+- `web/helpers/ui.php` — tooltip helpers
 
-## Bootstrap Files Added (Phase 1 Session 2)
-
-### Entry Points
-- `public/index.php` — API entry point (all /api/* requests)
-- `public/app.php`   — Web frontend entry point (placeholder, Phase 1 next)
-
-### Core Infrastructure
-- `api/autoload.php`              — PSR-4 autoloader, no Composer needed
-- `api/src/Config/Env.php`        — .env parser with typed getters
-- `api/src/Config/Database.php`   — PDO singleton with retry, transaction helper, inClause()
-- `api/src/Config/Logger.php`     — Structured JSON logger
-- `api/src/Api/Router.php`        — Regex router with middleware chain, group support
-- `api/src/Api/RequestResponse.php` — Request value object + Response helper
-
-### Auth Layer
-- `api/src/Services/JwtService.php`          — HS256 JWT, access + refresh tokens
-- `api/src/Middleware/AuthMiddleware.php`     — JWT validation, permission check
-- `api/src/Middleware/SystemTokenMiddleware.php` — External system token (CheckMK, XPression)
-- `api/src/Middleware/RateLimitMiddleware.php`   — Redis sliding window rate limiter
-- `api/src/Controllers/AuthController.php`   — login, logout, refresh, password reset
-
-### Services
-- `api/src/Services/AuditService.php` — append-only audit_log writer
-- `api/src/Services/MailService.php`  — PHPMailer wrapper (password reset, verify, SMS notice)
-
-### Config
-- `config/.env.example` — all required vars documented
-- `.htaccess`           — Dreamhost rewrite rules, security headers, SSL redirect
-- `.user.ini`           — PHP-FPM overrides for Dreamhost
-- `api/routes.php`      — all route definitions
-
-## Deployment Checklist (First Deploy)
-1. SSH to VPS, `git clone` repo to `/home/dh_w9tij7/nexalert.area51consulting.com/`
-2. `cp config/.env.example .env` → fill in DB, SMTP, APP_SECRET
-3. Create MySQL DB in Dreamhost panel, note host/user/pass
-4. `mysql -h <host> -u <user> -p <db> < db/001_initial_schema.sql`
-5. Create log dir: `mkdir -p ~/logs/nexalert`
-6. Enable Let's Encrypt in Dreamhost panel for `nexalert.area51consulting.com`
-7. Test: `curl https://nexalert.area51consulting.com/api/v1/health`
-8. Create first super_admin user (SQL INSERT - admin tool coming next session)
+## Deployment Checklist
+1. `php migrate.php --migrate-only` (through **011**)
+2. Fill `.env`: DB, SMTP, APP_SECRET, Twilio, VAPID keys
+3. `pip install pymysql twilio pywebpush`
+4. Run `python workers/dispatch.py` (systemd recommended)
+5. Test: health, login, send test alert, enable push on profile

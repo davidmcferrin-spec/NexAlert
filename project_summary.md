@@ -1,107 +1,68 @@
 # NexAlert — Project Summary & Development Handoff
 **Last updated:** 2026-06-27  
-**Status:** Phase 2 ~70% complete, live on Dreamhost VPS
+**Status:** Phase 2 complete; Phase 3–4 in progress; live on Dreamhost VPS
 
 ---
 
 ## 1. What NexAlert Is
 
 NexAlert is a self-hosted mass notification and alert management platform for
-Nexstar Media Group / NewsNation broadcast operations. It is purpose-built to
-replace commercial solutions like AlertMedia and Everbridge with a system
-fully owned and operated by the engineering team.
+Nexstar Media Group / NewsNation broadcast operations.
 
 **Primary use cases:**
-- System alerts (video path down, encoder failure, CheckMK/XPression triggers)
-- Staff notices (schedule changes, operational updates)
-- Safety alerts, warnings, and evacuation notices
-- Test messages for compliance verification
+- System alerts (CheckMK/XPression triggers via system token API)
+- Staff notices and operational updates
+- Safety alerts, warnings, evacuation notices
+- Polls, acknowledgement tracking, two-way chat threads
 
-**Inbound alert trigger:** External systems POST alerts via secure token REST API.
-Operators also compose alerts manually via the admin web UI.
+**Live:** `https://nexalert.area51consulting.com/admin`
 
 ---
 
 ## 2. Core Requirements
 
 ### Multi-Channel Delivery
-| Channel | Provider | Phase |
+| Channel | Provider | Status |
 |---|---|---|
-| Email | PHPMailer + SMTP (Dreamhost relay) | 2 |
-| SMS | Twilio Programmable SMS | 2 |
-| Web Push | VAPID (no app store required) | 3 |
-| In-App | WebSocket real-time feed | 4 |
-| FCM Push | Firebase (PWA/mobile) | 7 |
+| Email | PHPMailer + SMTP | ✅ Live |
+| SMS | Twilio | ✅ Live |
+| Web Push | VAPID + service worker | ✅ Live (requires VAPID + pywebpush) |
+| In-app | Profile alerts list | ✅ Live |
+| FCM Push | Firebase | ⬜ Phase 7 |
 
 ### Alert Types
-| Type | Behavior |
-|---|---|
-| `simple` | Fire and forget |
-| `ack_required` | Must acknowledge; escalates on TTL expiry |
-| `poll` | Vote with custom options; results visible to sender |
-| `chat` | Recipients reply to originator only |
-| `group_chat` | Full thread; all recipients see all replies |
+| Type | Behavior | Status |
+|---|---|---|
+| `simple` | Fire and forget | ✅ |
+| `ack_required` | Must ack; escalation on deadline | ✅ |
+| `poll` | Vote; email links + profile | ✅ |
+| `chat` | Recipients reply to originator only | ✅ |
+| `group_chat` | All recipients see all replies | ✅ |
 
 ### Severity Levels
-`test` → `info` → `notice` → `warning` → `critical` → `evacuation`
-Evacuation always sends all channels regardless of user preferences.
-
-### SMS Compliance
-Twilio A2P 10DLC requires explicit opt-in. Full lifecycle:
-`pending → invite_sent → opt_in_sent → confirmed | denied | expired | stopped`
-Every SMS dispatch must check `user_sms_consent.status = 'confirmed'`.
-STOP replies permanently flip to `stopped` until user re-initiates.
+`test` → `info` → `notice` → `warning` → `critical` → `evacuation`  
+Evacuation/critical override user channel preferences.
 
 ---
 
 ## 3. Organization & User Model
 
-### Org Tree
-Hierarchical tree using **materialized paths** (`/org_id/node_id/.../`) for O(1) subtree queries.
-
-```
-Organization
-  └── org_nodes: org → region → market → site → department → team
-        └── user_org_memberships
-```
-
-- Users have a **home org** for branding, admin ownership, and scope
-- Users can belong to **multiple org trees simultaneously**
-- `users.home_override = 1` prevents Entra sync from overwriting manual placements
-
-### Tag System
-Tags are a first-class targeting entity.
-
-- **Auto/Inherited:** When added to a node, user gets system tags for every ancestor in their path
-- **Manual:** Explicitly assigned (e.g. `Transmission`, `On-Call`)
-- **Exclusive:** Require tag owner or super_admin — users can request but not self-assign
-- Approval states: `pending → approved | denied`
-
-### Alert Targeting
-Expressions compile to DNF → `alert_targets` rows (each row ANDs fields; multiple rows ORed).
-
-**Dimensions:** `org:`, `node:` (subtree), `group:` (recursive BFS), `tag:`, `user:`
-
-**Expression engine:** `TargetAstService` + `TargetExpressionService` support nested AND/OR, comma lists (`tag:a,b`), and `target_tree` JSON from the Test Send builder. Multi-tag AND within one conjunction uses `conj_terms` JSON column (`db/007`).
-
-Example: `(org:NewsNation AND tag:Engineering) OR (group:NOC) OR (user:42)`
-
-### Groups
-Independent of org tree, can span orgs. `group_children` enables groups-of-groups.
-**Cycle detection enforced at application layer** before any `group_children` insert.
+- Hierarchical org tree with materialized paths (`org_nodes.path`)
+- Tags: auto/inherited, manual, exclusive with approval workflow
+- Groups: recursive BFS resolution, cycle detection
+- Targeting: `(org: AND tag:) OR group:` expressions + visual `target_tree` JSON
 
 ---
 
 ## 4. Authentication
 
-| Provider | Status | Notes |
-|---|---|---|
-| Local (bcrypt) | ✅ Live | Password reset via email token |
-| Azure Entra OIDC | Phase 5 | One tenant, multiple NexAlert orgs |
-| LDAP | Phase 5 | Secondary/legacy |
+| Provider | Status |
+|---|---|
+| Local (bcrypt) | ✅ Live |
+| Azure Entra OIDC | Phase 5 |
+| LDAP | Phase 5 |
 
-RBAC roles: `super_admin`, `org_admin`, `group_admin`, `sender`, `recipient`
-Assignments scoped: global, per-org, or per-org-node.
+RBAC: `super_admin`, `org_admin`, `group_admin`, `sender`, `recipient` with scoped assignments.
 
 ---
 
@@ -109,135 +70,122 @@ Assignments scoped: global, per-org, or per-org-node.
 
 | Layer | Tech |
 |---|---|
-| Frontend | PHP 8.4, Tailwind CSS (CDN), Alpine.js 3.x — no build pipeline |
-| API | PHP 8.4, Apache 2.4, custom PSR-4 autoloader — no Composer |
-| Workers | Python 3.11 asyncio (Phase 2+) |
-| Queue | MySQL table (Phase 1/2); Redis when available |
-| Database | MySQL 8.0.41, utf8mb4_unicode_ci |
+| Frontend | PHP 8.4, Tailwind CDN, Alpine.js 3.x |
+| API | PHP 8.4, Apache, custom PSR-4 autoloader |
+| Workers | Python 3.11 (`workers/dispatch.py`) |
+| Queue | MySQL `jobs` table |
+| Database | MySQL 8.0, utf8mb4_unicode_ci |
 | SMS | Twilio |
-| Email | PHPMailer + SMTP |
-| Hosting (dev) | Dreamhost VPS, Ubuntu 24.04, PHP-FPM/FastCGI |
-| Hosting (prod) | Azure App Service + Azure MySQL Flexible (Phase 7) |
+| Email | PHPMailer |
 
-**Hard constraints:** No Node.js. No Docker. No Composer.
-
-### Dreamhost-Specific
-- Webroot: `/home/dh_w9tij7/NexAlert/` (NOT a `public/` subdirectory)
-- All routing via `.htaccess` mod_rewrite
-- Authorization header requires: `RewriteRule .* - [E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]`
-- SSL via Dreamhost panel (Let's Encrypt)
-- PHP ini overrides in `.user.ini` at webroot
-- `Database::pdo()` must NOT ping — pinging resets `lastInsertId()` to 0
+**Hard constraints:** No Node.js, Docker, or Composer.
 
 ---
 
-## 6. Database
+## 6. Database Migrations
 
-32 tables in `db/001_initial_schema.sql`. Key notes:
+Run: `php migrate.php --migrate-only`
 
-- `org_nodes.path` is materialized path for subtree queries
-- `` `groups` `` is a MySQL reserved word — always backtick it
-- `audit_log` is **append-only** — never UPDATE or DELETE
-- `user_sms_consent` is separate from `user_contacts` for independent audit trail
-- `alert_targets` uses multi-row AND/OR targeting model
-- `Database::pdo()` does NOT ping — use `ensureConnected()` in workers only
+| Migration | Purpose |
+|---|---|
+| 007 | `alert_targets.conj_terms` for multi-tag AND |
+| 008 | Ack escalation columns |
+| 009 | Escalation group support |
+| 010 | Org admin token manage permission |
+| 011 | Push delivery `push_subscription_id`, nullable `contact_id` |
 
 ---
 
-## 7. Implemented API Endpoints
+## 7. Key API Endpoints
 
 ```
-POST   /api/v1/auth/login|logout|refresh|forgot-password|reset-password
-GET    /api/v1/health
-GET    /api/v1/health/deep          (auth required)
-GET    /api/v1/dashboard/stats       (auth required — org/user/alert/token counts)
+POST   /api/v1/alerts                    JWT + alert.send
+POST   /api/v1/alert                     System token (external triggers)
+GET    /api/v1/alerts/{id}               Detail + poll results + chat
+POST   /api/v1/alerts/{id}/ack|poll|cancel|retry
+GET    /api/v1/alerts/{id}/chat/messages
+POST   /api/v1/alerts/{id}/chat/messages|close
 
-POST   /api/v1/targets/preview        (expression and/or target_tree)
-GET    /api/v1/targets/entities       (autocomplete for builder)
+GET    /api/v1/poll/vote                   Public signed email vote
+GET    /api/v1/profile/push/vapid-key
+POST   /api/v1/profile/push/subscribe
+DELETE /api/v1/profile/push/subscriptions/{id}
 
-POST   /api/v1/alerts               (alert.send permission)
-GET    /api/v1/alerts
-
-GET    /api/v1/orgs
-POST   /api/v1/orgs
-GET    /api/v1/orgs/{id}
-PUT    /api/v1/orgs/{id}
-DELETE /api/v1/orgs/{id}
-
-GET    /api/v1/orgs/{org_id}/nodes
-POST   /api/v1/orgs/{org_id}/nodes
-GET    /api/v1/orgs/{org_id}/nodes/{id}
-PUT    /api/v1/orgs/{org_id}/nodes/{id}
-DELETE /api/v1/orgs/{org_id}/nodes/{id}
-PUT    /api/v1/orgs/{org_id}/nodes/{id}/move
-
-GET    /api/v1/users
-POST   /api/v1/users
-POST   /api/v1/users/import         (CSV multipart)
-GET    /api/v1/users/{id}
-PUT    /api/v1/users/{id}
-DELETE /api/v1/users/{id}
-GET    /api/v1/users/{id}/memberships
-POST   /api/v1/users/{id}/memberships
-DELETE /api/v1/users/{id}/memberships/{mid}
-GET    /api/v1/users/{id}/tags
-POST   /api/v1/users/{id}/tags
-DELETE /api/v1/users/{id}/tags/{tag_id}
+POST   /api/v1/targets/preview
+GET    /api/v1/dashboard/stats
+POST   /api/v1/webhooks/twilio/sms         STOP/YES + chat SMS routing
 ```
+
+Full CRUD: orgs, nodes, users, groups, tags, tokens — see `api/routes.php`.
 
 ---
 
 ## 8. Web Frontend
 
-URL: `https://nexalert.area51consulting.com/admin`
-
-**Live pages:**
-- `/admin/login` — login + dark/light toggle
-- `/admin` — dashboard with live stats (`GET /api/v1/dashboard/stats`), quick actions, health checks
-- `/admin/orgs` — org list + expandable org tree (add/edit nodes in modal)
-- `/admin/users`, `/admin/groups`, `/admin/tags` — full CRUD list + forms
-- `/admin/test-send` — nested AND/OR target builder, recipient preview, handoff to composer
-- `/admin/alerts/new` — alert composer (expression + target_tree, ack escalation user)
-- `/admin/alerts/history` — sent alerts, delivery/ack stats
-- `/admin/tokens` — system API token management
-- `/admin/audit` — read-only audit log
-
-**UI tooltips:** Site-wide via `web/helpers/ui.php` (`tip_attr`, `tip_label`, `tip_icon`) and `[data-tip]` CSS in admin layout.
-
----
-
-## 9. Known Issues & Technical Debt
-
-| Issue | Fix |
+| Path | Purpose |
 |---|---|
-| Redis unavailable on Dreamhost | Rate limiter fails open (safe). MySQL `jobs` queue used for dispatch. |
-| Migration 007/008 on VPS | Run `db/007_alert_target_conj_terms.sql` and `db/008_alert_escalation.sql` if not applied |
-| Email templates missing | `MailService` needs `api/src/Templates/mail/{password_reset,email_verify,sms_optin_notice}.php` |
-| `RequestResponse.php` stale | `api/src/Api/RequestResponse.php` unused — delete it |
-| Web Push / chat | Phase 3–4 |
+| `/admin` | Dashboard with live stats |
+| `/admin/alerts/new` | Composer (all alert types, channels, TTL, schedule) |
+| `/admin/alerts/history` | Delivery drill-down, poll results, chat thread |
+| `/admin/test-send` | Target builder |
+| `/profile` | Prefs, push subscribe, polls, chat replies |
+| `/poll/vote` | Public poll confirmation page |
 
 ---
 
-## 10. Phase Roadmap
+## 9. Dispatch Worker
+
+```bash
+pip install pymysql twilio pywebpush
+python workers/dispatch.py
+```
+
+On send complete: sets `sent_at`, ack deadline, TTL `expires_at`, schedules jobs.
+
+---
+
+## 10. Environment Setup
+
+```bash
+cp config/.env.example .env
+php migrate.php --migrate-only
+php scripts/generate_vapid.php   # optional, for Web Push
+```
+
+Required `.env`: `APP_SECRET`, `DB_*`, `SMTP_*`, `TWILIO_*` (SMS), `VAPID_*` (push).
+
+---
+
+## 11. Phase Roadmap
 
 | Phase | Status | Scope |
 |---|---|---|
-| 1 | ✅ Done | DB schema, org/node/user CRUD, auth, admin UI |
-| 2 | 🔄 70% | Alert API, email+SMS dispatch, ack escalation, AST targeting, composer UI |
-| 3 | ⬜ | Web Push (VAPID), poll delivery UI |
-| 4 | ⬜ | chat + group_chat, Python WS bridge, Twilio inbound SMS routing |
-| 5 | ⬜ | Azure Entra OIDC + LDAP, Entra directory import |
-| 6 | ⬜ | Delivery reports, scheduled alerts, template library |
-| 7 | ⬜ | Azure production migration, FCM/PWA, hardening |
+| 1 | ✅ Done | Schema, CRUD, auth, admin UI |
+| 2 | ✅ Done | Alert pipeline, email/SMS, ack, poll, TTL, schedule |
+| 3 | 🔄 | Web Push — subscription + dispatch done; polish remaining |
+| 4 | 🔄 | Chat — threads + SMS inbound done; WebSocket/real-time pending |
+| 5 | ⬜ | Entra OIDC + LDAP |
+| 6 | ⬜ | Template library, delivery reports |
+| 7 | ⬜ | Azure prod, FCM/PWA |
 
 ---
 
-## 11. Environment
+## 12. Known Issues & Technical Debt
+
+| Issue | Notes |
+|---|---|
+| Redis unavailable on Dreamhost | Rate limit fails open; MySQL queue used |
+| Real-time chat | Messages load on open; no WebSocket yet |
+| `push_fcm` | Schema only; not implemented |
+| Tag self-request on profile | Admin approval UI exists; user request flow pending |
+
+---
+
+## 13. Environment
 
 ```
 Live URL:    https://nexalert.area51consulting.com
 Admin:       https://nexalert.area51consulting.com/admin
 VPS path:    /home/dh_w9tij7/NexAlert/
-DB host:     mysql.area51consulting.com / DB: nexalert
-PHP:         8.4 / Apache 2.4 / FastCGI PHP-FPM / Ubuntu 24.04
+PHP:         8.4 / Apache / Ubuntu 24.04
 ```

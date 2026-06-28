@@ -25,13 +25,15 @@ $pageSubtitle = 'Compose and dispatch a multi-channel alert';
             </div>
             <div>
                 <label class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
-                    <?= tip_label('Alert type', 'Simple = no reply. Ack = recipients must confirm. Poll = vote on options.') ?>
+                    <?= tip_label('Alert type', 'Simple = no reply. Ack = confirm. Poll = vote. Chat = private reply to sender. Group chat = all see all replies.') ?>
                 </label>
                 <select x-model="form.alert_type"
                         class="w-full px-3 py-2 text-sm rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800">
                     <option value="simple">Simple (no reply)</option>
                     <option value="ack_required">Acknowledgement required</option>
                     <option value="poll">Poll</option>
+                    <option value="chat">Chat (reply to sender only)</option>
+                    <option value="group_chat">Group chat (all see replies)</option>
                 </select>
             </div>
         </div>
@@ -119,6 +121,12 @@ $pageSubtitle = 'Compose and dispatch a multi-channel alert';
                 </label>
                 <label class="flex items-center gap-2 text-sm" <?= tip_attr('Send via SMS to users with confirmed Twilio consent', 'bottom') ?>>
                     <input type="checkbox" value="sms" x-model="form.channels"> SMS
+                </label>
+                <label class="flex items-center gap-2 text-sm" <?= tip_attr('Browser push to devices that enabled Web Push on their profile', 'bottom') ?>>
+                    <input type="checkbox" value="push_web" x-model="form.channels"> Web Push
+                </label>
+                <label class="flex items-center gap-2 text-sm" <?= tip_attr('Show in the recipient profile alerts list (no external send)', 'bottom') ?>>
+                    <input type="checkbox" value="in_app" x-model="form.channels"> In-app
                 </label>
             </div>
         </div>

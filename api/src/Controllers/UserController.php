@@ -16,7 +16,10 @@
  * DELETE /api/v1/users/{id}/tags/{tag_id}     → remove manual tag
  * GET    /api/v1/users/{id}/roles             → list role assignments
  * POST   /api/v1/users/{id}/roles             → assign scoped role
- * DELETE /api/v1/users/{id}/roles/{rid}       → revoke role assignment
+ * POST   /api/v1/users/{id}/reset-password    → send reset link or set password (admin)
+ * POST   /api/v1/users/{id}/contacts         → add contact (admin)
+ * PUT    /api/v1/users/{id}/contacts/{cid}   → update contact (admin)
+ * DELETE /api/v1/users/{id}/contacts/{cid}   → remove contact (admin)
  */
 
 declare(strict_types=1);
@@ -32,6 +35,7 @@ use NexAlert\Services\PermissionService;
 use NexAlert\Services\RowNormalizer;
 use NexAlert\Services\SmsConsentService;
 use NexAlert\Services\TagService;
+use NexAlert\Services\UserPasswordService;
 
 class UserController
 {
@@ -185,7 +189,7 @@ class UserController
             // Add primary email contact if provided
             $email = trim((string) $request->input('email', ''));
             if ($email !== '') {
-                self::addContact($db, $userId, 'email', $email, 'Work', true);
+                self::addContact($db, $userId, 'email', $email, 'Work', true, true);
             }
 
             // Add primary phone if provided
@@ -214,6 +218,17 @@ class UserController
 
             return $userId;
         });
+
+        if ($passwordHash === null) {
+            $email = trim((string) $request->input('email', ''));
+            if ($email !== '') {
+                try {
+                    UserPasswordService::sendResetLink($db, $userId, true);
+                } catch (\Throwable) {
+                    // User created; admin can resend reset from edit screen
+                }
+            }
+        }
 
         $user = self::fetchUserDetail($db, $userId);
         Response::success($user, 'User created', 201);
@@ -276,6 +291,254 @@ class UserController
         SmsConsentService::initiateOptIn($db, $id, $contactId, (int) $request->user['uid']);
 
         Response::success(null, 'SMS opt-in request queued');
+    }
+
+    /**
+     * POST /api/v1/users/{id}/reset-password
+     * Body: { "action": "send_link" } OR { "action": "set_password", "password": "...", "password_confirm": "..." }
+     */
+    public static function resetPassword(Request $request): never
+    {
+        $id = (int) $request->param('id');
+        $db = Database::getInstance();
+
+        self::assertUserAccess($request, $id, $db);
+
+        $user = $db->fetchOne('SELECT id, username, is_active FROM users WHERE id = ?', [$id]);
+        if (!$user) {
+            Response::notFound('User not found');
+        }
+        if (!(int) $user['is_active']) {
+            Response::error('User is deactivated', 409);
+        }
+
+        $action = strtolower(trim((string) $request->input('action', 'send_link')));
+
+        if ($action === 'send_link') {
+            try {
+                $email = UserPasswordService::sendResetLink($db, $id, true);
+            } catch (\RuntimeException $e) {
+                Response::error($e->getMessage(), 400);
+            }
+
+            AuditService::log('user.password_reset_sent', 'user', (string) $id, [
+                'email' => $email,
+            ], $request->user['uid']);
+
+            Response::success(['email' => $email], 'Password reset email sent');
+        }
+
+        if ($action === 'set_password') {
+            $missing = $request->validate(['password', 'password_confirm']);
+            if ($missing) {
+                Response::validationError(array_fill_keys($missing, 'Required'));
+            }
+
+            $password = (string) $request->input('password');
+            $confirm  = (string) $request->input('password_confirm');
+
+            if ($password !== $confirm) {
+                Response::validationError(['password_confirm' => 'Passwords do not match']);
+            }
+            if (strlen($password) < 12) {
+                Response::validationError(['password' => 'Password must be at least 12 characters']);
+            }
+
+            UserPasswordService::setPassword($db, $id, $password, true);
+
+            AuditService::log('user.password_set_by_admin', 'user', (string) $id, [], $request->user['uid']);
+
+            Response::success(null, 'Password updated');
+        }
+
+        Response::validationError(['action' => 'Must be send_link or set_password']);
+    }
+
+    /**
+     * POST /api/v1/users/{id}/contacts
+     * Body: { "channel": "email|sms", "contact_value": "...", "label": "...", "is_primary": true, "mark_verified": true }
+     */
+    public static function addContactRoute(Request $request): never
+    {
+        $id = (int) $request->param('id');
+        $db = Database::getInstance();
+
+        self::assertUserAccess($request, $id, $db);
+
+        $channel = strtolower(trim((string) $request->input('channel', '')));
+        $value   = trim((string) $request->input('contact_value', ''));
+        $label   = trim((string) $request->input('label', '')) ?: ($channel === 'sms' ? 'Mobile' : 'Work');
+
+        if (!in_array($channel, ['email', 'sms'], true)) {
+            Response::validationError(['channel' => 'Must be email or sms']);
+        }
+        if ($value === '') {
+            Response::validationError(['contact_value' => 'Required']);
+        }
+
+        if ($channel === 'sms') {
+            $value = self::normalizePhone($value);
+        } elseif (!filter_var($value, FILTER_VALIDATE_EMAIL)) {
+            Response::validationError(['contact_value' => 'Invalid email address']);
+        }
+
+        $isPrimary    = (bool) $request->input('is_primary', true);
+        $markVerified = (bool) $request->input('mark_verified', $channel === 'email');
+
+        if ($isPrimary) {
+            $db->execute(
+                'UPDATE user_contacts SET is_primary = 0 WHERE user_id = ? AND channel = ?',
+                [$id, $channel]
+            );
+        }
+
+        $verified = ($channel === 'email' && $markVerified) ? 1 : 0;
+        $db->execute(
+            'INSERT INTO user_contacts (user_id, channel, contact_value, label, is_primary, is_verified, verified_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)',
+            [$id, $channel, $value, $label, $isPrimary ? 1 : 0, $verified, $verified ? date('Y-m-d H:i:s') : null]
+        );
+        $contactId = $db->lastInsertId();
+
+        if ($channel === 'sms') {
+            SmsConsentService::ensureConsentRecord($db, $id, $contactId, $value, (int) $request->user['uid']);
+            if ($request->input('send_sms_optin') !== false) {
+                SmsConsentService::initiateOptIn($db, $id, $contactId, (int) $request->user['uid']);
+            }
+        }
+
+        AuditService::log('user.contact_added', 'user_contact', (string) $contactId, [
+            'user_id' => $id,
+            'channel' => $channel,
+        ], $request->user['uid']);
+
+        $user = self::fetchUserDetail($db, $id);
+        Response::success($user, 'Contact added', 201);
+    }
+
+    /**
+     * PUT /api/v1/users/{id}/contacts/{cid}
+     * Body: { "contact_value": "...", "is_primary": true, "mark_verified": true }
+     */
+    public static function updateContact(Request $request): never
+    {
+        $id        = (int) $request->param('id');
+        $contactId = (int) $request->param('cid');
+        $db        = Database::getInstance();
+
+        self::assertUserAccess($request, $id, $db);
+
+        $contact = $db->fetchOne(
+            'SELECT id, channel, contact_value FROM user_contacts
+             WHERE id = ? AND user_id = ? AND is_active = 1',
+            [$contactId, $id]
+        );
+        if (!$contact) {
+            Response::notFound('Contact not found');
+        }
+
+        $channel = (string) $contact['channel'];
+        $value   = trim((string) $request->input('contact_value', $contact['contact_value']));
+
+        if ($value === '') {
+            Response::validationError(['contact_value' => 'Required']);
+        }
+
+        if ($channel === 'sms') {
+            $value = self::normalizePhone($value);
+        } elseif (!filter_var($value, FILTER_VALIDATE_EMAIL)) {
+            Response::validationError(['contact_value' => 'Invalid email address']);
+        }
+
+        $markVerified = $request->input('mark_verified');
+        $isPrimary    = $request->input('is_primary');
+
+        if ($isPrimary) {
+            $db->execute(
+                'UPDATE user_contacts SET is_primary = 0 WHERE user_id = ? AND channel = ?',
+                [$id, $channel]
+            );
+        }
+
+        $sets   = ['contact_value = ?'];
+        $params = [$value];
+
+        if ($channel === 'email') {
+            if ($markVerified === true) {
+                $sets[] = 'is_verified = 1';
+                $sets[] = 'verified_at = NOW()';
+            } elseif ($markVerified === false || $value !== $contact['contact_value']) {
+                $sets[] = 'is_verified = 0';
+                $sets[] = 'verified_at = NULL';
+            }
+        }
+        if ($isPrimary !== null) {
+            $sets[] = 'is_primary = ?';
+            $params[] = $isPrimary ? 1 : 0;
+        }
+
+        $params[] = $contactId;
+        $db->execute(
+            'UPDATE user_contacts SET ' . implode(', ', $sets) . ' WHERE id = ?',
+            $params
+        );
+
+        if ($channel === 'sms' && $value !== $contact['contact_value']) {
+            $consent = $db->fetchOne(
+                'SELECT id, status FROM user_sms_consent WHERE contact_id = ?',
+                [$contactId]
+            );
+            if ($consent && $consent['status'] === 'stopped') {
+                Response::error('Number opted out via STOP — add a new contact instead', 409);
+            }
+            if ($consent) {
+                $db->execute(
+                    "UPDATE user_sms_consent
+                     SET phone_e164 = ?, status = 'pending', confirmed_at = NULL, opt_in_sent_at = NULL
+                     WHERE contact_id = ?",
+                    [$value, $contactId]
+                );
+            } else {
+                SmsConsentService::ensureConsentRecord($db, $id, $contactId, $value, (int) $request->user['uid']);
+            }
+        }
+
+        AuditService::log('user.contact_updated', 'user_contact', (string) $contactId, [
+            'user_id' => $id,
+            'channel' => $channel,
+        ], $request->user['uid']);
+
+        $user = self::fetchUserDetail($db, $id);
+        Response::success($user, 'Contact updated');
+    }
+
+    /**
+     * DELETE /api/v1/users/{id}/contacts/{cid}
+     */
+    public static function deleteContact(Request $request): never
+    {
+        $id        = (int) $request->param('id');
+        $contactId = (int) $request->param('cid');
+        $db        = Database::getInstance();
+
+        self::assertUserAccess($request, $id, $db);
+
+        $contact = $db->fetchOne(
+            'SELECT id FROM user_contacts WHERE id = ? AND user_id = ? AND is_active = 1',
+            [$contactId, $id]
+        );
+        if (!$contact) {
+            Response::notFound('Contact not found');
+        }
+
+        $db->execute('UPDATE user_contacts SET is_active = 0 WHERE id = ?', [$contactId]);
+
+        AuditService::log('user.contact_removed', 'user_contact', (string) $contactId, [
+            'user_id' => $id,
+        ], $request->user['uid']);
+
+        $user = self::fetchUserDetail($db, $id);
+        Response::success($user, 'Contact removed');
     }
 
     /**
@@ -482,7 +745,7 @@ class UserController
                     );
                     $userId = $db->lastInsertId();
 
-                    self::addContact($db, $userId, 'email', $data['email'], 'Work', true);
+                    self::addContact($db, $userId, 'email', $data['email'], 'Work', true, true);
 
                     $smsContactId = null;
                     if (!empty($data['phone'])) {
@@ -523,6 +786,12 @@ class UserController
 
                 if ($smsContactId !== null && $smsContactId > 0) {
                     SmsConsentService::initiateOptIn($db, $userId, $smsContactId, (int) $request->user['uid']);
+                }
+
+                try {
+                    UserPasswordService::sendResetLink($db, $userId, true);
+                } catch (\Throwable) {
+                    // Import succeeded; reset can be sent manually
                 }
 
                 $results['created']++;
@@ -1037,12 +1306,17 @@ class UserController
         string $channel,
         string $value,
         string $label,
-        bool $isPrimary
+        bool $isPrimary,
+        bool $adminVerified = false
     ): int {
+        $verified = ($channel === 'email' && $adminVerified) ? 1 : 0;
         $db->execute(
-            'INSERT INTO user_contacts (user_id, channel, contact_value, label, is_primary)
-             VALUES (?, ?, ?, ?, ?)',
-            [$userId, $channel, $value, $label, $isPrimary ? 1 : 0]
+            'INSERT INTO user_contacts (user_id, channel, contact_value, label, is_primary, is_verified, verified_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)',
+            [
+                $userId, $channel, $value, $label, $isPrimary ? 1 : 0,
+                $verified, $verified ? date('Y-m-d H:i:s') : null,
+            ]
         );
 
         $contactId = $db->lastInsertId();

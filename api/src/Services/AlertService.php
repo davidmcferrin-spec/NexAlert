@@ -459,6 +459,33 @@ class AlertService
                     continue;
                 }
 
+                if ($channel === 'push_web') {
+                    $stats = self::queuePushDeliveries($db, $alertId, $userId, $stats);
+                    continue;
+                }
+
+                if ($channel === 'in_app') {
+                    $stats = self::queueInAppDelivery($db, $alertId, $userId, $stats);
+                    continue;
+                }
+
+                if ($channel === 'push_fcm') {
+                    $contact = self::findPrimaryContact($db, $userId, $channel);
+                    $contactId = $contact ? (int) $contact['id'] : self::fallbackContactId($db, $userId);
+                    if ($contactId === null) {
+                        $stats['skipped']++;
+                        continue;
+                    }
+                    $db->execute(
+                        'INSERT INTO alert_deliveries
+                            (alert_id, user_id, contact_id, channel, status, skip_reason)
+                         VALUES (?, ?, ?, ?, \'skipped\', ?)',
+                        [$alertId, $userId, $contactId, $channel, 'channel_not_implemented']
+                    );
+                    $stats['skipped']++;
+                    continue;
+                }
+
                 $contact = self::findPrimaryContact($db, $userId, $channel);
                 if ($contact === null) {
                     $stats['skipped']++;
@@ -560,11 +587,80 @@ class AlertService
             }
         }
 
-        if (in_array($channel, ['push_web', 'push_fcm', 'in_app'], true)) {
-            return 'channel_not_implemented';
+        return null;
+    }
+
+    /**
+     * @param array{queued: int, skipped: int} $stats
+     * @return array{queued: int, skipped: int}
+     */
+    private static function queuePushDeliveries(
+        Database $db,
+        int $alertId,
+        int $userId,
+        array $stats
+    ): array {
+        if (!WebPushService::isConfigured()) {
+            $stats['skipped']++;
+            return $stats;
         }
 
-        return null;
+        $subs = WebPushService::activeSubscriptionsForUser($db, $userId);
+        if ($subs === []) {
+            $stats['skipped']++;
+            return $stats;
+        }
+
+        foreach ($subs as $sub) {
+            $db->execute(
+                'INSERT INTO alert_deliveries
+                    (alert_id, user_id, contact_id, push_subscription_id, channel, status)
+                 VALUES (?, ?, NULL, ?, \'push_web\', \'queued\')',
+                [$alertId, $userId, (int) $sub['id']]
+            );
+            $stats['queued']++;
+        }
+
+        return $stats;
+    }
+
+    /**
+     * @param array{queued: int, skipped: int} $stats
+     * @return array{queued: int, skipped: int}
+     */
+    private static function queueInAppDelivery(
+        Database $db,
+        int $alertId,
+        int $userId,
+        array $stats
+    ): array {
+        $contactId = self::fallbackContactId($db, $userId);
+        if ($contactId === null) {
+            $stats['skipped']++;
+            return $stats;
+        }
+
+        $db->execute(
+            'INSERT INTO alert_deliveries
+                (alert_id, user_id, contact_id, channel, status, sent_at)
+             VALUES (?, ?, ?, \'in_app\', \'sent\', UTC_TIMESTAMP())',
+            [$alertId, $userId, $contactId]
+        );
+        $stats['queued']++;
+
+        return $stats;
+    }
+
+    private static function fallbackContactId(Database $db, int $userId): ?int
+    {
+        $id = $db->fetchValue(
+            'SELECT id FROM user_contacts
+             WHERE user_id = ? AND is_active = 1
+             ORDER BY is_primary DESC, id ASC LIMIT 1',
+            [$userId]
+        );
+
+        return $id !== false && $id !== null ? (int) $id : null;
     }
 
     /** @return array<string, mixed> */

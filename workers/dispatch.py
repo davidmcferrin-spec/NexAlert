@@ -5,7 +5,7 @@ NexAlert dispatch worker — polls MySQL jobs queue and sends alert deliveries.
 Usage:
   python workers/dispatch.py
 
-Requires: pip install pymysql twilio (twilio optional if SMS disabled)
+Requires: pip install pymysql twilio pywebpush (twilio/pywebpush optional if disabled)
 Reads .env from repo root (parent of workers/).
 """
 
@@ -241,7 +241,56 @@ def build_sms_body(alert: dict) -> str:
     severity = (alert.get("severity") or "info").upper()
     subject = alert.get("subject") or "Alert"
     body = (alert.get("body") or "")[:400]
-    return f"NexAlert [{severity}] {subject}: {body}"
+    msg = f"NexAlert [{severity}] {subject}: {body}"
+    if alert.get("alert_type") in ("chat", "group_chat"):
+        msg += " — Reply by texting back."
+    return msg
+
+
+def send_web_push(delivery: dict, alert: dict, alert_id: int, conn) -> None:
+    """Send Web Push notification via pywebpush (optional dependency)."""
+    try:
+        from pywebpush import WebPushException, webpush  # type: ignore
+    except ImportError as exc:
+        raise RuntimeError("Install pywebpush: pip install pywebpush") from exc
+
+    private_key = env("VAPID_PRIVATE_KEY", "")
+    subject = env("VAPID_SUBJECT", "mailto:nexalert@example.com")
+    if not private_key:
+        raise RuntimeError("VAPID_PRIVATE_KEY not configured")
+
+    app_url = env("APP_URL", "").rstrip("/")
+    payload = json.dumps({
+        "title": f"NexAlert: {alert.get('subject', 'Alert')}",
+        "body": (alert.get("body") or "")[:180],
+        "url": f"{app_url}/profile?alert={alert_id}",
+    })
+
+    subscription = {
+        "endpoint": delivery["endpoint"],
+        "keys": {
+            "p256dh": delivery["p256dh"],
+            "auth": delivery["auth_key"],
+        },
+    }
+
+    try:
+        webpush(
+            subscription_info=subscription,
+            data=payload,
+            vapid_private_key=private_key,
+            vapid_claims={"sub": subject},
+        )
+    except WebPushException as exc:
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+        if status == 410:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE push_subscriptions SET is_active = 0, failed_count = failed_count + 1 WHERE id = %s",
+                    (delivery.get("push_subscription_id"),),
+                )
+                conn.commit()
+        raise
 
 
 def process_dispatch_alert(conn, alert_id: int):
@@ -272,9 +321,12 @@ def process_dispatch_alert(conn, alert_id: int):
         cur.execute(
             """
             SELECT ad.id, ad.user_id, ad.contact_id, ad.channel, ad.status,
-                   uc.contact_value, uc.channel AS contact_channel
+                   ad.push_subscription_id,
+                   uc.contact_value, uc.channel AS contact_channel,
+                   ps.endpoint, ps.p256dh, ps.auth_key
             FROM alert_deliveries ad
-            JOIN user_contacts uc ON uc.id = ad.contact_id
+            LEFT JOIN user_contacts uc ON uc.id = ad.contact_id
+            LEFT JOIN push_subscriptions ps ON ps.id = ad.push_subscription_id
             WHERE ad.alert_id = %s AND ad.status = 'queued'
             """,
             (alert_id,),
@@ -303,6 +355,19 @@ def process_dispatch_alert(conn, alert_id: int):
                 provider_id = None
             elif d["channel"] == "sms":
                 provider_id = send_sms(d["contact_value"], build_sms_body(alert))
+            elif d["channel"] == "push_web":
+                if not d.get("endpoint"):
+                    raise RuntimeError("Missing push subscription for delivery")
+                send_web_push(d, alert, alert_id, conn)
+                provider_id = None
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "UPDATE push_subscriptions SET last_used_at = NOW(), failed_count = 0 WHERE id = %s",
+                        (d.get("push_subscription_id"),),
+                    )
+                    conn.commit()
+            elif d["channel"] == "in_app":
+                provider_id = None
             else:
                 raise RuntimeError(f"Channel not implemented: {d['channel']}")
 

@@ -59,6 +59,26 @@ $severities = ['test', 'info', 'notice', 'warning', 'critical', 'evacuation'];
     </div>
 
     <div class="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 p-6">
+        <h2 class="text-sm font-semibold mb-1">Browser push notifications</h2>
+        <p class="text-xs text-gray-400 mb-4">Receive alerts on this device even when NexAlert is not open. Requires HTTPS and a supported browser.</p>
+        <div x-show="!pushConfigured" class="text-sm text-amber-600 mb-3">Web Push is not configured on this server (VAPID keys missing).</div>
+        <div class="flex flex-wrap gap-2 mb-4">
+            <button @click="enablePush()" :disabled="pushBusy || !pushConfigured"
+                    class="px-4 py-2 text-sm font-semibold bg-red-600 text-white rounded-xl disabled:opacity-50">
+                <span x-text="pushBusy ? 'Enabling…' : 'Enable push on this device'"></span>
+            </button>
+        </div>
+        <ul x-show="pushSubscriptions.length" class="text-sm divide-y divide-gray-100 dark:divide-gray-800">
+            <template x-for="s in pushSubscriptions" :key="s.id">
+                <li class="py-2 flex items-center justify-between gap-2">
+                    <span x-text="s.device_label || 'Browser device'"></span>
+                    <button @click="removePush(s)" class="text-xs text-red-500">Remove</button>
+                </li>
+            </template>
+        </ul>
+    </div>
+
+    <div class="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 p-6">
         <h2 class="text-sm font-semibold mb-1">Notification preferences</h2>
         <p class="text-xs text-gray-400 mb-4">Choose which channels receive alerts at each severity level.</p>
         <div class="overflow-x-auto">
@@ -68,6 +88,7 @@ $severities = ['test', 'info', 'notice', 'warning', 'critical', 'evacuation'];
                         <th class="text-left py-2 pr-4">Severity</th>
                         <th class="text-center py-2 px-2">Email</th>
                         <th class="text-center py-2 px-2">SMS</th>
+                        <th class="text-center py-2 px-2">Push</th>
                         <th class="text-center py-2 px-2">In-app</th>
                     </tr>
                 </thead>
@@ -86,6 +107,11 @@ $severities = ['test', 'info', 'notice', 'warning', 'critical', 'evacuation'];
                                        class="rounded border-gray-300">
                             </td>
                             <td class="py-2 text-center">
+                                <input type="checkbox" :checked="pref.channel_push == 1"
+                                       @change="pref.channel_push = $event.target.checked ? 1 : 0"
+                                       class="rounded border-gray-300">
+                            </td>
+                            <td class="py-2 text-center">
                                 <input type="checkbox" :checked="pref.channel_in_app == 1"
                                        @change="pref.channel_in_app = $event.target.checked ? 1 : 0"
                                        class="rounded border-gray-300">
@@ -99,15 +125,23 @@ $severities = ['test', 'info', 'notice', 'warning', 'critical', 'evacuation'];
     </div>
 
     <div class="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 p-6">
-        <h2 class="text-sm font-semibold mb-4">Contact methods</h2>
+        <h2 class="text-sm font-semibold mb-1">Contact methods</h2>
+        <p class="text-xs text-gray-400 mb-4">Email and mobile number used for alert delivery. SMS requires replying YES to confirm.</p>
         <ul class="divide-y divide-gray-100 dark:divide-gray-800 mb-4">
             <template x-for="c in profile.contacts || []" :key="c.id">
-                <li class="py-3 flex items-center justify-between gap-3">
-                    <div>
-                        <span class="text-xs uppercase text-gray-400" x-text="c.channel"></span>
-                        <div class="text-sm font-mono" x-text="c.contact_value"></div>
+                <li class="py-3 flex items-start justify-between gap-3">
+                    <div class="flex-1 min-w-0">
+                        <span class="text-xs uppercase font-medium text-gray-400" x-text="c.channel === 'sms' ? 'Mobile phone (SMS)' : 'Email'"></span>
+                        <template x-if="editingContactId !== c.id">
+                            <div class="text-sm font-mono mt-0.5 break-all" x-text="c.contact_value"></div>
+                        </template>
+                        <template x-if="editingContactId === c.id">
+                            <input type="text" x-model="editContactValue"
+                                   :placeholder="c.channel === 'sms' ? '+1 555 123 4567' : 'you@example.com'"
+                                   class="mt-1 w-full px-3 py-2 text-sm font-mono rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800">
+                        </template>
                         <div class="text-xs text-gray-400 mt-0.5">
-                            <span x-show="c.is_verified == 1" class="text-green-600">Verified</span>
+                            <span x-show="c.is_verified == 1" class="text-green-600">Email verified</span>
                             <span x-show="c.channel === 'sms' && c.sms_consent_status"
                                   class="capitalize"
                                   :class="{
@@ -118,29 +152,43 @@ $severities = ['test', 'info', 'notice', 'warning', 'critical', 'evacuation'];
                                   x-text="'SMS: ' + smsConsentLabel(c.sms_consent_status)"></span>
                         </div>
                     </div>
-                    <div class="flex gap-2">
-                        <button x-show="c.channel === 'email' && c.is_verified != 1" @click="resendVerify(c)"
+                    <div class="flex flex-col items-end gap-1 flex-shrink-0">
+                        <template x-if="editingContactId !== c.id">
+                            <button @click="startEditContact(c)" class="text-xs text-blue-600 hover:underline">Edit</button>
+                        </template>
+                        <template x-if="editingContactId === c.id">
+                            <div class="flex gap-2">
+                                <button @click="saveEditContact(c)" class="text-xs font-semibold text-green-600">Save</button>
+                                <button @click="cancelEditContact()" class="text-xs text-gray-400">Cancel</button>
+                            </div>
+                        </template>
+                        <button x-show="c.channel === 'email' && c.is_verified != 1 && editingContactId !== c.id" @click="resendVerify(c)"
                                 class="text-xs text-blue-600">Resend verify</button>
-                        <button x-show="c.channel === 'sms' && c.sms_consent_status !== 'confirmed' && c.sms_consent_status !== 'stopped'"
+                        <button x-show="c.channel === 'sms' && c.sms_consent_status !== 'confirmed' && c.sms_consent_status !== 'stopped' && editingContactId !== c.id"
                                 @click="smsOptIn(c)"
                                 class="text-xs text-green-600"
                                 :title="c.sms_consent_status === 'opt_in_sent' ? 'Reply YES to the text message to confirm' : 'Send Twilio opt-in SMS'">
                             <span x-text="c.sms_consent_status === 'opt_in_sent' ? 'Resend opt-in' : 'Request SMS opt-in'"></span>
                         </button>
-                        <button @click="removeContact(c)" class="text-xs text-red-500">Remove</button>
+                        <button x-show="editingContactId !== c.id" @click="removeContact(c)" class="text-xs text-red-500">Remove</button>
                     </div>
                 </li>
             </template>
+            <li x-show="!(profile.contacts || []).length" class="py-3 text-sm text-gray-400">No contacts on file — add an email or phone below.</li>
         </ul>
-        <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
-            <select x-model="newContact.channel" class="px-3 py-2 text-sm rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800">
-                <option value="email">Email</option>
-                <option value="sms">SMS</option>
-            </select>
-            <input type="text" x-model="newContact.contact_value" placeholder="address or +1…"
-                   class="px-3 py-2 text-sm rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 sm:col-span-2">
+        <div class="border-t border-gray-100 dark:border-gray-800 pt-4">
+            <p class="text-xs font-medium text-gray-500 mb-2">Add contact</p>
+            <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                <select x-model="newContact.channel" class="px-3 py-2 text-sm rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800">
+                    <option value="email">Email</option>
+                    <option value="sms">Mobile phone (SMS)</option>
+                </select>
+                <input type="text" x-model="newContact.contact_value"
+                       :placeholder="newContact.channel === 'sms' ? '+1 555 123 4567' : 'you@example.com'"
+                       class="px-3 py-2 text-sm rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 sm:col-span-2">
+            </div>
+            <button @click="addContact()" class="mt-3 px-4 py-2 text-sm font-semibold bg-gray-100 dark:bg-gray-800 rounded-xl hover:bg-gray-200 dark:hover:bg-gray-700 transition-colors">Add contact</button>
         </div>
-        <button @click="addContact()" class="mt-3 px-4 py-2 text-sm font-semibold bg-gray-100 dark:bg-gray-800 rounded-xl">Add contact</button>
     </div>
 
     <div class="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 p-6">
@@ -171,6 +219,29 @@ $severities = ['test', 'info', 'notice', 'warning', 'critical', 'evacuation'];
                                 <p x-show="!canVote(a) && a.i_voted == 0 && (a.is_expired || a.status === 'expired')" class="text-xs text-gray-400 mt-2">Poll closed</p>
                             </div>
                         </template>
+                        <div x-show="a.can_chat" class="mt-3 border-t border-gray-100 dark:border-gray-800 pt-3">
+                            <button @click="toggleChat(a)" class="text-xs font-semibold text-red-600 hover:underline mb-2"
+                                    x-text="openChatId === a.id ? 'Hide conversation' : 'View / reply'"></button>
+                            <div x-show="openChatId === a.id">
+                                <div class="max-h-48 overflow-y-auto space-y-2 mb-2 text-sm bg-gray-50 dark:bg-gray-800/50 rounded-xl p-3">
+                                    <template x-for="m in (chatMessages[a.id] || [])" :key="m.id">
+                                        <div>
+                                            <span class="text-xs font-semibold text-gray-500" x-text="m.user_name"></span>
+                                            <span class="text-xs text-gray-400 ml-1" x-text="formatDate(m.created_at)"></span>
+                                            <p class="text-gray-700 dark:text-gray-300 whitespace-pre-wrap" x-text="m.body"></p>
+                                        </div>
+                                    </template>
+                                    <p x-show="!(chatMessages[a.id] || []).length" class="text-xs text-gray-400">No messages yet.</p>
+                                </div>
+                                <div class="flex gap-2">
+                                    <input type="text" x-model="chatDraft[a.id]" placeholder="Type a reply…"
+                                           @keydown.enter.prevent="sendChat(a)"
+                                           class="flex-1 px-3 py-2 text-sm rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800">
+                                    <button @click="sendChat(a)" class="px-3 py-2 text-xs font-semibold bg-red-600 text-white rounded-xl">Send</button>
+                                </div>
+                                <p class="text-xs text-gray-400 mt-1">SMS recipients can reply by texting back while this thread is open.</p>
+                            </div>
+                        </div>
                     </div>
                     <button x-show="a.ack_required == 1 && a.i_acked == 0 && !a.is_expired && a.status !== 'expired'" @click="ackAlert(a)"
                             class="flex-shrink-0 px-3 py-1.5 text-xs font-semibold bg-red-600 text-white rounded-lg">
@@ -190,7 +261,10 @@ const SEVERITIES = <?= json_encode($severities, JSON_THROW_ON_ERROR) ?>;
 function profilePage() {
     return {
         profile: {}, myAlerts: [], notificationPrefs: [],
+        pushSubscriptions: [], pushConfigured: false, pushBusy: false,
+        openChatId: null, chatMessages: {}, chatDraft: {},
         newContact: { channel: 'email', contact_value: '' },
+        editingContactId: null, editContactValue: '',
         passwordForm: { current: '', password: '', confirm: '' },
         passwordSaving: false,
         async init() {
@@ -198,9 +272,92 @@ function profilePage() {
             const a = await api.get('/profile/alerts?limit=20');
             if (a.ok) this.myAlerts = a.data.data.alerts;
             await this.loadNotifications();
+            await this.loadPushSubscriptions();
             const params = new URLSearchParams(location.search);
             const ackId = params.get('ack_alert');
             if (ackId) this.ackAlert({ id: parseInt(ackId, 10) });
+            const alertId = params.get('alert');
+            if (alertId) {
+                const a = this.myAlerts.find(x => x.id == alertId);
+                if (a && a.can_chat) this.toggleChat(a);
+            }
+        },
+        urlBase64ToUint8Array(base64String) {
+            const padding = '='.repeat((4 - base64String.length % 4) % 4);
+            const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+            const raw = atob(base64);
+            const arr = new Uint8Array(raw.length);
+            for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+            return arr;
+        },
+        async loadPushSubscriptions() {
+            const res = await api.get('/profile/push/subscriptions');
+            if (res.ok) {
+                this.pushSubscriptions = res.data.data.subscriptions || [];
+                this.pushConfigured = !!res.data.data.configured;
+            }
+        },
+        async enablePush() {
+            if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+                toast('Push notifications are not supported in this browser', 'error');
+                return;
+            }
+            this.pushBusy = true;
+            try {
+                const keyRes = await api.get('/profile/push/vapid-key');
+                if (!keyRes.ok) {
+                    toast(keyRes.data?.error || 'Push not available', 'error');
+                    return;
+                }
+                const reg = await navigator.serviceWorker.register('/sw.js');
+                const sub = await reg.pushManager.subscribe({
+                    userVisibleOnly: true,
+                    applicationServerKey: this.urlBase64ToUint8Array(keyRes.data.data.public_key),
+                });
+                const json = sub.toJSON();
+                const save = await api.post('/profile/push/subscribe', {
+                    endpoint: json.endpoint,
+                    p256dh: json.keys.p256dh,
+                    auth: json.keys.auth,
+                    user_agent: navigator.userAgent,
+                });
+                toast(save.ok ? 'Push enabled on this device' : (save.data?.error || 'Failed'), save.ok ? 'success' : 'error');
+                if (save.ok) await this.loadPushSubscriptions();
+            } catch (e) {
+                toast(e.message || 'Could not enable push', 'error');
+            } finally {
+                this.pushBusy = false;
+            }
+        },
+        async removePush(s) {
+            const res = await api.delete('/profile/push/subscriptions/' + s.id);
+            toast(res.ok ? 'Device removed' : (res.data?.error || 'Failed'), res.ok ? 'success' : 'error');
+            if (res.ok) await this.loadPushSubscriptions();
+        },
+        async toggleChat(a) {
+            if (this.openChatId === a.id) {
+                this.openChatId = null;
+                return;
+            }
+            this.openChatId = a.id;
+            await this.loadChat(a.id);
+        },
+        async loadChat(alertId) {
+            const res = await api.get('/alerts/' + alertId + '/chat/messages');
+            if (res.ok) {
+                this.chatMessages[alertId] = res.data.data.messages || [];
+            }
+        },
+        async sendChat(a) {
+            const body = (this.chatDraft[a.id] || '').trim();
+            if (!body) return;
+            const res = await api.post('/alerts/' + a.id + '/chat/messages', { body });
+            if (res.ok) {
+                this.chatDraft[a.id] = '';
+                await this.loadChat(a.id);
+            } else {
+                toast(res.data?.error || 'Send failed', 'error');
+            }
         },
         severityBadge(s) {
             const m = { test: 'bg-gray-100 text-gray-600', info: 'bg-blue-100 text-blue-700',
@@ -251,6 +408,7 @@ function profilePage() {
                 severity: sev,
                 channel_email: bySev[sev]?.channel_email ?? 1,
                 channel_sms: bySev[sev]?.channel_sms ?? (['warning', 'critical', 'evacuation'].includes(sev) ? 1 : 0),
+                channel_push: bySev[sev]?.channel_push ?? (['warning', 'critical', 'evacuation'].includes(sev) ? 1 : 0),
                 channel_in_app: bySev[sev]?.channel_in_app ?? 1,
             }));
         },
@@ -283,15 +441,44 @@ function profilePage() {
                 severity: p.severity,
                 channel_email: p.channel_email == 1,
                 channel_sms: p.channel_sms == 1,
+                channel_push: p.channel_push == 1,
                 channel_in_app: p.channel_in_app == 1,
             }));
             const res = await api.put('/profile/notifications', { prefs });
             toast(res.ok ? 'Preferences saved' : (res.data?.error || 'Failed'), res.ok ? 'success' : 'error');
         },
         async addContact() {
+            const val = (this.newContact.contact_value || '').trim();
+            if (!val) { toast('Enter an email or phone number', 'error'); return; }
             const res = await api.post('/profile/contacts', this.newContact);
-            toast(res.ok ? 'Contact added' : (res.data?.error || 'Failed'), res.ok ? 'success' : 'error');
-            if (res.ok) { this.newContact.contact_value = ''; await this.reloadProfile(); }
+            toast(res.ok ? 'Contact added' : (res.data?.error || res.data?.errors?.contact_value?.[0] || 'Failed'), res.ok ? 'success' : 'error');
+            if (res.ok) {
+                this.newContact.contact_value = '';
+                await this.reloadProfile();
+                if (this.newContact.channel === 'sms') {
+                    toast('Request SMS opt-in from the contact list after adding your number', 'success');
+                }
+            }
+        },
+        startEditContact(c) {
+            this.editingContactId = c.id;
+            this.editContactValue = c.contact_value;
+        },
+        cancelEditContact() {
+            this.editingContactId = null;
+            this.editContactValue = '';
+        },
+        async saveEditContact(c) {
+            const val = (this.editContactValue || '').trim();
+            if (!val) { toast('Value required', 'error'); return; }
+            const res = await api.put('/profile/contacts/' + c.id, { contact_value: val });
+            if (res.ok) {
+                toast(c.channel === 'sms' ? 'Phone updated — request SMS opt-in again if needed' : 'Email updated — check inbox to verify');
+                this.cancelEditContact();
+                await this.reloadProfile();
+            } else {
+                toast(res.data?.error || res.data?.errors?.contact_value?.[0] || 'Failed', 'error');
+            }
         },
         async removeContact(c) {
             if (!confirm('Remove this contact?')) return;
