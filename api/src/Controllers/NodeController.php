@@ -274,10 +274,23 @@ class NodeController
 
         self::assertValidParentForType($nodeType, $parent);
 
+        $parentId = $node['parent_id'] !== null ? (int) $node['parent_id'] : null;
+        $slug     = self::resolveUpdatedSlug($db, $orgId, $parentId, $nodeId, $node, $name, $request);
+
+        if ($nodeType === 'org' && $slug !== $node['slug']) {
+            if ($db->fetchValue('SELECT id FROM organizations WHERE slug = ? AND id != ?', [$slug, $orgId])) {
+                Response::validationError(['slug' => 'Organization slug already in use']);
+            }
+        }
+
         $db->execute(
-            'UPDATE org_nodes SET name = ?, node_type = ? WHERE id = ?',
-            [$name, $nodeType, $nodeId]
+            'UPDATE org_nodes SET name = ?, node_type = ?, slug = ? WHERE id = ?',
+            [$name, $nodeType, $slug, $nodeId]
         );
+
+        if ($nodeType === 'org' && $slug !== $node['slug']) {
+            $db->execute('UPDATE organizations SET slug = ? WHERE id = ?', [$slug, $orgId]);
+        }
 
         if ($name !== $node['name']) {
             TagService::syncSystemTagForNodeName($db, $node['name']);
@@ -286,8 +299,8 @@ class NodeController
         }
 
         AuditService::log('org_node.updated', 'org_node', (string) $nodeId, [
-            'before' => ['name' => $node['name'], 'node_type' => $node['node_type']],
-            'after'  => ['name' => $name, 'node_type' => $nodeType],
+            'before' => ['name' => $node['name'], 'node_type' => $node['node_type'], 'slug' => $node['slug']],
+            'after'  => ['name' => $name, 'node_type' => $nodeType, 'slug' => $slug],
         ], $request->user['uid']);
 
         $updated = $db->fetchOne('SELECT * FROM org_nodes WHERE id = ?', [$nodeId]);
@@ -537,6 +550,61 @@ class NodeController
         return substr($slug, 0, 80);
     }
 
+    /**
+     * True when slug was auto-derived from the node name (base or base-N suffix).
+     */
+    private static function slugMatchesNameDerived(string $slug, string $name): bool
+    {
+        $base = self::slugify($name);
+        if ($base === '') {
+            return false;
+        }
+        if ($slug === $base) {
+            return true;
+        }
+
+        return (bool) preg_match('/^' . preg_quote($base, '/') . '(-\d+)?$/', $slug);
+    }
+
+    /**
+     * Resolve slug on update: explicit input, auto-sync when linked to old name, or unchanged.
+     */
+    private static function resolveUpdatedSlug(
+        Database $db,
+        int $orgId,
+        ?int $parentId,
+        int $nodeId,
+        array $node,
+        string $name,
+        Request $request
+    ): string {
+        $slugInput = $request->input('slug');
+        if ($slugInput !== null && trim((string) $slugInput) !== '') {
+            $slug = strtolower(trim((string) $slugInput));
+            if (!preg_match('/^[a-z0-9_-]+$/', $slug)) {
+                Response::validationError(['slug' => 'Only lowercase letters, numbers, hyphens, and underscores']);
+            }
+            $baseFromName = self::slugify($name);
+            if (
+                $slug === $baseFromName
+                && $name !== $node['name']
+                && self::slugMatchesNameDerived($node['slug'], $node['name'])
+            ) {
+                $slug = self::allocateUniqueSlug($db, $orgId, $parentId, $baseFromName, $nodeId);
+            }
+        } elseif ($name !== $node['name'] && self::slugMatchesNameDerived($node['slug'], $node['name'])) {
+            $slug = self::allocateUniqueSlug($db, $orgId, $parentId, self::slugify($name), $nodeId);
+        } else {
+            $slug = $node['slug'];
+        }
+
+        if ($slug !== $node['slug'] && self::slugExistsUnderParent($db, $orgId, $parentId, $slug, $nodeId)) {
+            Response::validationError(['slug' => 'Slug already in use under this parent node']);
+        }
+
+        return $slug;
+    }
+
     private static function slugExistsUnderParent(
         Database $db,
         int $orgId,
@@ -563,18 +631,19 @@ class NodeController
         Database $db,
         int $orgId,
         ?int $parentId,
-        string $baseSlug
+        string $baseSlug,
+        ?int $excludeNodeId = null
     ): string {
         $baseSlug = $baseSlug !== '' ? $baseSlug : 'node';
 
-        if (!self::slugExistsUnderParent($db, $orgId, $parentId, $baseSlug)) {
+        if (!self::slugExistsUnderParent($db, $orgId, $parentId, $baseSlug, $excludeNodeId)) {
             return $baseSlug;
         }
 
         for ($n = 2; $n <= 999; $n++) {
             $suffix = '-' . $n;
             $slug   = substr($baseSlug, 0, max(1, 80 - strlen($suffix))) . $suffix;
-            if (!self::slugExistsUnderParent($db, $orgId, $parentId, $slug)) {
+            if (!self::slugExistsUnderParent($db, $orgId, $parentId, $slug, $excludeNodeId)) {
                 return $slug;
             }
         }

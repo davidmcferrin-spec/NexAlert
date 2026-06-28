@@ -255,6 +255,7 @@ $headerActions = '
                         <div>
                             <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Name</label>
                             <input type="text" x-model="editForm.name" x-ref="nodeModalName"
+                                   @input="onEditNameInput()"
                                    class="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-gray-700
                                           bg-white dark:bg-gray-800 text-gray-900 dark:text-white
                                           focus:outline-none focus:ring-2 focus:ring-red-500">
@@ -285,16 +286,21 @@ $headerActions = '
                         </div>
                         <div>
                             <label class="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Slug</label>
-                            <div class="px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-gray-700
-                                        bg-gray-100 dark:bg-gray-800/80 text-gray-500 font-mono"
-                                 x-text="editingNode?.slug || '—'"></div>
-                            <p class="text-xs text-gray-400 mt-1">Set at creation (used for CSV import).</p>
+                            <input type="text" x-model="editForm.slug"
+                                   @input="onEditSlugInput()"
+                                   class="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 dark:border-gray-700
+                                          bg-white dark:bg-gray-800 text-gray-900 dark:text-white font-mono
+                                          focus:outline-none focus:ring-2 focus:ring-red-500">
+                            <p class="text-xs text-gray-400 mt-1">
+                                <span x-show="slugLinked">Updates from name.</span>
+                                <span x-show="!slugLinked">Custom slug — used for CSV import and alert targeting.</span>
+                            </p>
                         </div>
                     </div>
                     <div class="flex justify-end gap-3 px-6 py-4 border-t border-gray-100 dark:border-gray-800">
                         <button type="button" @click="closeNodeModal()"
                                 class="px-4 py-2 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900">Cancel</button>
-                        <button type="button" @click="saveEditNode()" :disabled="!editForm.name || editSaving"
+                        <button type="button" @click="saveEditNode()" :disabled="!editForm.name || !editForm.slug || editSaving"
                                 class="px-4 py-2 text-sm font-semibold bg-red-600 hover:bg-red-700 disabled:opacity-50
                                        text-white rounded-xl">
                             <span x-text="editSaving ? 'Saving…' : 'Save Changes'"></span>
@@ -314,7 +320,8 @@ function orgsPage() {
         search: '', filterActive: '1', selectedOrg: null,
         nodeModal: null,
         collapsed: {},
-        editingNode: null, editForm: { name: '', node_type: '', parent_id: null }, originalParentId: null,
+        editingNode: null, editForm: { name: '', node_type: '', parent_id: null, slug: '' },
+        originalParentId: null, slugLinked: true,
         editSaving: false,
         newNode: { name: '', node_type: 'region', parent_id: null, parentName: '', parent_type: null },
 
@@ -397,8 +404,9 @@ function orgsPage() {
         closeNodeModal() {
             this.nodeModal = null;
             this.editingNode = null;
-            this.editForm = { name: '', node_type: '', parent_id: null };
+            this.editForm = { name: '', node_type: '', parent_id: null, slug: '' };
             this.originalParentId = null;
+            this.slugLinked = true;
             this.editSaving = false;
             this.newNode = { name: '', node_type: 'region', parent_id: null, parentName: '', parent_type: null };
         },
@@ -532,16 +540,42 @@ function orgsPage() {
             };
         },
 
+        slugifyName(name) {
+            let slug = String(name || '').toLowerCase().replace(/[^a-z0-9\s_-]/g, '').trim();
+            slug = slug.replace(/[\s]+/g, '-');
+            return slug.substring(0, 80);
+        },
+
+        slugMatchesNameDerived(slug, name) {
+            const base = this.slugifyName(name);
+            if (!slug || !base) return false;
+            if (slug === base) return true;
+            const escaped = base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            return new RegExp('^' + escaped + '(-\\d+)?$').test(slug);
+        },
+
+        onEditNameInput() {
+            if (this.slugLinked) {
+                this.editForm.slug = this.slugifyName(this.editForm.name);
+            }
+        },
+
+        onEditSlugInput() {
+            this.slugLinked = false;
+        },
+
         openEditNode(node) {
             this.closeNodeModal();
             this.editingNode = node;
             const parentId = node.parent_id != null && node.parent_id !== ''
                 ? Number(node.parent_id)
                 : (this.orgRootNode()?.id ?? null);
+            this.slugLinked = this.slugMatchesNameDerived(node.slug || '', node.name);
             this.editForm = {
                 name: node.name,
                 node_type: node.node_type,
                 parent_id: parentId,
+                slug: node.slug || '',
             };
             this.originalParentId = node.parent_id != null && node.parent_id !== ''
                 ? Number(node.parent_id)
@@ -555,6 +589,11 @@ function orgsPage() {
                 toast('Name is required', 'error');
                 return;
             }
+            const slug = String(this.editForm.slug || '').trim().toLowerCase();
+            if (!slug || !/^[a-z0-9_-]+$/.test(slug)) {
+                toast('Slug must use lowercase letters, numbers, hyphens, and underscores', 'error');
+                return;
+            }
             this.editSaving = true;
             const orgId = this.selectedOrg.id;
             const nodeId = this.editingNode.id;
@@ -562,6 +601,7 @@ function orgsPage() {
             const updateRes = await api.put(`/orgs/${orgId}/nodes/${nodeId}`, {
                 name: this.editForm.name,
                 node_type: this.editForm.node_type,
+                slug,
             });
             if (!updateRes.ok) {
                 this.editSaving = false;
