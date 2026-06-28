@@ -30,6 +30,7 @@ use NexAlert\Services\NotificationService;
 use NexAlert\Services\PollService;
 use NexAlert\Services\RowNormalizer;
 use NexAlert\Services\SmsConsentService;
+use NexAlert\Services\UserProfileDataService;
 use NexAlert\Services\WebPushService;
 
 class ProfileController
@@ -41,10 +42,12 @@ class ProfileController
 
         $user = $db->fetchOne(
             'SELECT u.id, u.username, u.display_name, u.first_name, u.last_name,
-                    u.timezone, u.preferred_language, u.home_org_id,
-                    o.display_name AS home_org_name
+                    u.timezone, u.preferred_language, u.home_org_id, u.home_node_id,
+                    o.display_name AS home_org_name,
+                    hn.name AS home_node_name
              FROM users u
              JOIN organizations o ON o.id = u.home_org_id
+             LEFT JOIN org_nodes hn ON hn.id = u.home_node_id
              WHERE u.id = ?',
             [$userId]
         );
@@ -452,6 +455,87 @@ class ProfileController
         $data = NotificationService::getUpdates($db, $userId, $since);
 
         Response::success($data);
+    }
+
+    public static function listMemberships(Request $request): never
+    {
+        $db     = Database::getInstance();
+        $userId = (int) $request->user['uid'];
+
+        Response::success([
+            'memberships' => UserProfileDataService::fetchMemberships($db, $userId),
+        ]);
+    }
+
+    public static function listTags(Request $request): never
+    {
+        $db     = Database::getInstance();
+        $userId = (int) $request->user['uid'];
+
+        Response::success([
+            'tags' => UserProfileDataService::fetchTags($db, $userId),
+        ]);
+    }
+
+    public static function listRequestableTags(Request $request): never
+    {
+        $db     = Database::getInstance();
+        $userId = (int) $request->user['uid'];
+
+        Response::success([
+            'tags' => UserProfileDataService::fetchRequestableTags($db, $userId),
+        ]);
+    }
+
+    public static function listTagRequests(Request $request): never
+    {
+        $db     = Database::getInstance();
+        $userId = (int) $request->user['uid'];
+
+        Response::success([
+            'requests' => UserProfileDataService::fetchTagRequests($db, $userId),
+        ]);
+    }
+
+    public static function createTagRequest(Request $request): never
+    {
+        $db     = Database::getInstance();
+        $userId = (int) $request->user['uid'];
+        $tagId  = (int) $request->input('tag_id', 0);
+
+        if ($tagId <= 0) {
+            Response::validationError(['tag_id' => 'Required']);
+        }
+
+        $justification = $request->input('justification') !== null
+            ? (string) $request->input('justification')
+            : null;
+
+        $result = UserProfileDataService::submitTagRequest($db, $userId, $tagId, $justification);
+
+        Response::success($result, $result['message'] ?? 'OK', 201);
+    }
+
+    public static function cancelTagRequest(Request $request): never
+    {
+        $db        = Database::getInstance();
+        $userId    = (int) $request->user['uid'];
+        $requestId = (int) $request->param('id');
+
+        UserProfileDataService::cancelTagRequest($db, $userId, $requestId);
+
+        Response::success(null, 'Request cancelled');
+    }
+
+    public static function removeTag(Request $request): never
+    {
+        $db     = Database::getInstance();
+        $userId = (int) $request->user['uid'];
+        $tagId  = (int) $request->param('tag_id');
+
+        UserProfileDataService::removeManualTag($db, $userId, $tagId);
+
+        Response::success(null, 'Tag removed');
     }
 
     public static function changePassword(Request $request): never

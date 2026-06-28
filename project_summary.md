@@ -177,7 +177,7 @@ Required `.env`: `APP_SECRET`, `DB_*`, `SMTP_*`, `TWILIO_*` (SMS), `VAPID_*` (pu
 | Redis unavailable on Dreamhost | Rate limit fails open; MySQL queue used |
 | Real-time chat | Messages load on open; no WebSocket yet |
 | `push_fcm` | Schema only; not implemented |
-| Tag self-request on profile | Admin approval UI exists; user request flow pending |
+| Tag self-request on profile | ✅ Profile UI + `POST /api/v1/profile/tag-requests` |
 
 ---
 

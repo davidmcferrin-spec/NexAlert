@@ -196,6 +196,13 @@ return function (Router $router): void {
         $r->post('/push/subscribe',     [ProfileController::class, 'subscribePush'],      [AuthMiddleware::required()]);
         $r->delete('/push/subscriptions/{id:\d+}', [ProfileController::class, 'unsubscribePush'], [AuthMiddleware::required()]);
         $r->get('/updates',              [ProfileController::class, 'updates'],              [AuthMiddleware::required()]);
+        $r->get('/memberships',          [ProfileController::class, 'listMemberships'],    [AuthMiddleware::required()]);
+        $r->get('/tags/requestable',     [ProfileController::class, 'listRequestableTags'], [AuthMiddleware::required()]);
+        $r->get('/tags',                 [ProfileController::class, 'listTags'],           [AuthMiddleware::required()]);
+        $r->delete('/tags/{tag_id:\d+}', [ProfileController::class, 'removeTag'],          [AuthMiddleware::required()]);
+        $r->get('/tag-requests',         [ProfileController::class, 'listTagRequests'],    [AuthMiddleware::required()]);
+        $r->post('/tag-requests',        [ProfileController::class, 'createTagRequest'],   [AuthMiddleware::required()]);
+        $r->delete('/tag-requests/{id:\d+}', [ProfileController::class, 'cancelTagRequest'], [AuthMiddleware::required()]);
         $r->post('/change-password',    [ProfileController::class, 'changePassword'],       [AuthMiddleware::required()]);
     });
 

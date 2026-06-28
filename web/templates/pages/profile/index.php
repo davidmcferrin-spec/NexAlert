@@ -20,6 +20,13 @@ $severities = ['test', 'info', 'notice', 'warning', 'critical', 'evacuation'];
                 <div class="text-sm text-gray-600 dark:text-gray-300 font-mono" x-text="profile.username"></div>
             </div>
             <div>
+                <label class="block text-xs text-gray-400 mb-1">Home organization</label>
+                <div class="text-sm text-gray-600 dark:text-gray-300" x-text="profile.home_org_name || '—'"></div>
+                <div x-show="profile.home_node_name" class="text-xs text-gray-400 mt-0.5">
+                    Home node: <span x-text="profile.home_node_name"></span>
+                </div>
+            </div>
+            <div>
                 <label class="block text-xs text-gray-400 mb-1">Display name</label>
                 <input type="text" x-model="profile.display_name"
                        class="w-full px-3 py-2 text-sm rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800">
@@ -30,6 +37,79 @@ $severities = ['test', 'info', 'notice', 'warning', 'critical', 'evacuation'];
                        class="w-full px-3 py-2 text-sm rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800">
             </div>
             <button @click="saveProfile()" class="px-4 py-2 text-sm font-semibold bg-red-600 text-white rounded-xl">Save profile</button>
+        </div>
+    </div>
+
+    <div class="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 p-6">
+        <h2 class="text-sm font-semibold mb-1">Organizations &amp; nodes</h2>
+        <p class="text-xs text-gray-400 mb-4">Your home org and active org-node memberships (managed by administrators).</p>
+        <ul class="divide-y divide-gray-100 dark:divide-gray-800">
+            <template x-for="m in memberships" :key="m.id">
+                <li class="py-3">
+                    <div class="text-sm font-medium text-gray-900 dark:text-white" x-text="m.breadcrumb || m.org_name"></div>
+                    <div x-show="m.position_title" class="text-xs text-gray-500 mt-0.5" x-text="m.position_title"></div>
+                    <div class="text-xs text-gray-400 mt-0.5 capitalize" x-text="m.node_type ? m.node_type.replace('_', ' ') : ''"></div>
+                </li>
+            </template>
+            <li x-show="!memberships.length" class="py-3 text-sm text-gray-400">No org node memberships on file.</li>
+        </ul>
+    </div>
+
+    <div class="bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-800 p-6">
+        <h2 class="text-sm font-semibold mb-1">Tags</h2>
+        <p class="text-xs text-gray-400 mb-4">Tags used for alert targeting. System and org-inherited tags are read-only.</p>
+
+        <div class="flex flex-wrap gap-2 mb-5">
+            <template x-for="t in myTags" :key="t.tag_id">
+                <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-medium"
+                      :class="t.is_system == 1
+                        ? 'bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
+                        : 'bg-gray-100 text-gray-700 dark:bg-gray-800 dark:text-gray-300'"
+                      :title="tagAssignmentLabel(t)">
+                    <span x-text="t.name"></span>
+                    <span class="opacity-60 text-[10px] uppercase" x-text="(t.assignment_type || '').replace('_', ' ')"></span>
+                    <button x-show="canRemoveTag(t)" @click="removeMyTag(t)"
+                            class="opacity-60 hover:opacity-100 transition-opacity" title="Remove tag">✕</button>
+                </span>
+            </template>
+            <span x-show="!myTags.length" class="text-sm text-gray-400">No tags assigned yet.</span>
+        </div>
+
+        <div x-show="pendingTagRequests.length" class="mb-5 border-t border-gray-100 dark:border-gray-800 pt-4">
+            <h3 class="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2">Pending requests</h3>
+            <ul class="space-y-2">
+                <template x-for="r in pendingTagRequests" :key="r.id">
+                    <li class="flex items-center justify-between gap-3 text-sm">
+                        <div>
+                            <span class="font-medium" x-text="r.tag_name"></span>
+                            <span class="text-xs text-amber-600 ml-2">Awaiting approval</span>
+                            <p x-show="r.justification" class="text-xs text-gray-400 mt-0.5" x-text="r.justification"></p>
+                        </div>
+                        <button @click="cancelTagRequest(r)" class="text-xs text-red-500 hover:underline">Cancel</button>
+                    </li>
+                </template>
+            </ul>
+        </div>
+
+        <div class="border-t border-gray-100 dark:border-gray-800 pt-4">
+            <h3 class="text-xs font-semibold uppercase tracking-wider text-gray-500 mb-2">Request a tag</h3>
+            <p class="text-xs text-gray-400 mb-3">Request tags your administrator has opened for self-service. Some tags are added immediately; others require approval.</p>
+            <div class="space-y-3 max-w-lg">
+                <select x-model="tagRequestForm.tag_id"
+                        class="w-full px-3 py-2 text-sm rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800">
+                    <option value="">Select a tag to request…</option>
+                    <template x-for="t in requestableTags" :key="t.id">
+                        <option :value="t.id" x-text="t.name + (t.requires_approval == 1 ? ' (needs approval)' : '')"></option>
+                    </template>
+                </select>
+                <textarea x-model="tagRequestForm.justification" rows="2" placeholder="Optional: why you need this tag"
+                          class="w-full px-3 py-2 text-sm rounded-xl border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800"></textarea>
+                <button @click="submitTagRequest()" :disabled="!tagRequestForm.tag_id || tagRequestBusy"
+                        class="px-4 py-2 text-sm font-semibold bg-red-600 text-white rounded-xl disabled:opacity-50">
+                    <span x-text="tagRequestBusy ? 'Submitting…' : 'Submit request'"></span>
+                </button>
+                <p x-show="!requestableTags.length" class="text-xs text-gray-400">No tags are available to request right now.</p>
+            </div>
         </div>
     </div>
 
@@ -273,8 +353,18 @@ function profilePage() {
         editingContactId: null, editContactValue: '',
         passwordForm: { current: '', password: '', confirm: '' },
         passwordSaving: false,
+        memberships: [],
+        myTags: [],
+        tagRequests: [],
+        requestableTags: [],
+        tagRequestForm: { tag_id: '', justification: '' },
+        tagRequestBusy: false,
+        get pendingTagRequests() {
+            return (this.tagRequests || []).filter(r => r.status === 'pending');
+        },
         async init() {
             await this.reloadProfile();
+            await this.loadOrgAndTags();
             const a = await api.get('/profile/alerts?limit=20');
             if (a.ok) this.myAlerts = a.data.data.alerts;
             await this.loadNotifications();
@@ -431,6 +521,61 @@ function profilePage() {
         async reloadProfile() {
             const p = await api.get('/profile');
             if (p.ok) this.profile = p.data.data;
+        },
+        async loadOrgAndTags() {
+            const [memRes, tagRes, reqRes, availRes] = await Promise.all([
+                api.get('/profile/memberships'),
+                api.get('/profile/tags'),
+                api.get('/profile/tag-requests'),
+                api.get('/profile/tags/requestable'),
+            ]);
+            if (memRes.ok) this.memberships = memRes.data.data.memberships || [];
+            if (tagRes.ok) this.myTags = tagRes.data.data.tags || [];
+            if (reqRes.ok) this.tagRequests = reqRes.data.data.requests || [];
+            if (availRes.ok) this.requestableTags = availRes.data.data.tags || [];
+        },
+        tagAssignmentLabel(t) {
+            if (t.source_node_name) return 'From org node: ' + t.source_node_name;
+            return (t.assignment_type || '').replace(/_/g, ' ');
+        },
+        canRemoveTag(t) {
+            return t.assignment_type === 'manual' || t.assignment_type === 'approved_request';
+        },
+        async removeMyTag(t) {
+            if (!confirm('Remove tag "' + t.name + '" from your profile?')) return;
+            const res = await api.delete('/profile/tags/' + t.tag_id);
+            if (res.ok) {
+                toast('Tag removed');
+                await this.loadOrgAndTags();
+            } else {
+                toast(res.data?.error || 'Could not remove tag', 'error');
+            }
+        },
+        async submitTagRequest() {
+            if (!this.tagRequestForm.tag_id) return;
+            this.tagRequestBusy = true;
+            const res = await api.post('/profile/tag-requests', {
+                tag_id: parseInt(this.tagRequestForm.tag_id, 10),
+                justification: this.tagRequestForm.justification.trim() || null,
+            });
+            this.tagRequestBusy = false;
+            if (res.ok) {
+                toast(res.data.message || 'Request submitted', 'success');
+                this.tagRequestForm = { tag_id: '', justification: '' };
+                await this.loadOrgAndTags();
+            } else {
+                toast(res.data?.error || res.data?.errors?.tag_id || 'Request failed', 'error');
+            }
+        },
+        async cancelTagRequest(r) {
+            if (!confirm('Cancel your request for "' + r.tag_name + '"?')) return;
+            const res = await api.delete('/profile/tag-requests/' + r.id);
+            if (res.ok) {
+                toast('Request cancelled');
+                await this.loadOrgAndTags();
+            } else {
+                toast(res.data?.error || 'Could not cancel', 'error');
+            }
         },
         async loadNotifications() {
             const res = await api.get('/profile/notifications');
